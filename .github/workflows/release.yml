@@ -1,0 +1,145 @@
+# Builds the packages for Linux and Windows and attaches them to a release.
+# Triggered by a tag such as v0.1.0, which must match tauri.conf.json.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev \
+            libayatana-appindicator3-dev libssl-dev patchelf
+
+      - name: Check the tag against the version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$version" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version." >&2
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        shell: bash
+        run: |
+          cargo test --workspace
+          npm test
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: npx tauri build --bundles deb,rpm,appimage
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: npx tauri build --bundles nsis
+
+      - name: No-trace check
+        if: runner.os == 'Linux'
+        run: ./scripts/check-build.sh target/release/grt-bible
+
+      # Tauri names its output after the product, spaces included.
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          name="grt-bible-$version"
+          out="$GITHUB_WORKSPACE/dist"
+          bundle="target/release/bundle"
+          mkdir -p "$out"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp "$bundle"/appimage/*.AppImage "$out/$name-linux-x86_64.AppImage"
+            cp "$bundle"/deb/*.deb "$out/$name-linux-x86_64.deb"
+            cp "$bundle"/rpm/*.rpm "$out/$name-linux-x86_64.rpm"
+          else
+            cp "$bundle"/nsis/*-setup.exe "$out/$name-windows-x86_64-setup.exe"
+          fi
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: grt-bible-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Release notes
+        shell: bash
+        run: |
+          {
+            echo "On Linux the \`.AppImage\` needs no installation: make it"
+            echo "executable (\`chmod +x\`) and open it. The \`.deb\` and \`.rpm\`"
+            echo "install through the package manager."
+            echo
+            echo "On Windows, run the \`-setup.exe\`. It is not code-signed,"
+            echo "so Windows warns about an unknown publisher."
+            echo
+            echo "The Android \`.apk\` is built and signed on the maintainer's"
+            echo "machine, since the signing key is not in this repository, and"
+            echo "attached here by hand. Phones accept an update only if it"
+            echo "carries the same signature as the version already installed."
+            echo
+            echo "The translations are inside every package. GRT Bible reads"
+            echo "them offline; the only thing that touches the network is a"
+            echo "video link, which opens in your browser. The channels"
+            echo "those links point at are not affiliated with GRT Bible."
+            echo
+            echo "\`SHA256SUMS\` covers every file: \`sha256sum -c SHA256SUMS\`."
+          } > notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "GRT Bible ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            dist/*

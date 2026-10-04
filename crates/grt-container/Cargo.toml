@@ -1,0 +1,15 @@
+[package]
+name = "grt-container"
+version.workspace = true
+description = "Deterministic reader and writer for the .grt document container"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+flate2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

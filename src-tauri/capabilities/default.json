@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window. The webview reaches no network: videos are opened by Rust in the system browser after checking the host.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-ask",
+    "dialog:allow-message",
+    "core:webview:deny-create-webview",
+    "core:webview:deny-create-webview-window",
+    "core:window:deny-create"
+  ]
+}

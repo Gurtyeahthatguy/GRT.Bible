@@ -1,0 +1,12 @@
+[package]
+name = "grtb-convert"
+version.workspace = true
+description = "Builds GRT Bible modules and the video catalog from source texts"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+grtb = { path = "../grtb" }
+serde = { workspace = true }
+serde_json = { workspace = true }

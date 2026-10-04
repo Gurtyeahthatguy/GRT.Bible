@@ -1,0 +1,22 @@
+{
+  "name": "grt-bible",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "author": "GRT Project",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:binary": "tauri build --no-bundle",
+    "build:android": "bash scripts/build-android.sh",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "preview": "bash scripts/preview.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "jsdom": "^25",
+    "vitest": "^2"
+  }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "grtb"
+version.workspace = true
+description = "Canon, versification and the .grtb module format for GRT Bible"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+sha2 = { workspace = true }
+flate2 = { workspace = true }
+unicode-normalization = { workspace = true }
+zip = { workspace = true }
+grt-container = { path = "../grt-container" }
+bzip2-rs = "0.1"
+lzma-rs = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,26 @@
+# Addresses check-build.sh accepts in a release binary, each with its reason.
+
+# D-Bus specification and introspection identifiers inside the file dialog's bus library.
+https://dbus.freedesktop.org/doc/dbus-specification.html
+http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd
+
+# Issue links quoted in comments and panic messages of Tauri, wry and muda.
+https://github.com/tauri-apps
+https://github.com/whatwg/html/issues/7428
+
+# Tauri's own IPC origin on Windows, local to the process.
+http://ipc.localhost
+http://tauri.localhost
+
+# XML and SQLite namespace identifiers, which nothing resolves.
+http://www.w3.org
+https://www.w3.org
+http://purl.org
+https://sqlite.org
+https://www.sqlite.org
+
+# The clang version string the Android NDK writes into the library it builds.
+https://android.googlesource.com/toolchain/llvm-project
+
+# Doctype names in html5ever's table, which the Android build carries and nothing fetches.
+http://www.ibm.com/data/dtd

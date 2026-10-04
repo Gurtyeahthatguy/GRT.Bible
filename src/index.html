@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GRT Bible</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <header class="toolbar" role="toolbar" aria-label="Reading">
+      <div class="group">
+        <button id="btn-prev" class="icon" aria-label="Previous chapter" title="Previous chapter (Left arrow)">&#8249;</button>
+        <button id="btn-location" class="location" title="Books and chapters">&nbsp;</button>
+        <button id="btn-next" class="icon" aria-label="Next chapter" title="Next chapter (Right arrow)">&#8250;</button>
+      </div>
+
+      <div class="group">
+        <label class="sr-only" for="module-picker">Translation</label>
+        <span class="picker">
+          <span id="module-label" class="picker-label" aria-hidden="true"></span>
+          <select id="module-picker" title="Translation"></select>
+        </span>
+        <button id="btn-parallel" aria-pressed="false" aria-label="Compare" title="Read translations side by side">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7.5" height="16" rx="1.5" /><rect x="13.5" y="4" width="7.5" height="16" rx="1.5" /></svg>
+          <span class="label">Compare</span>
+        </button>
+      </div>
+
+      <nav class="group grow tools" aria-label="Tools">
+        <button id="btn-goto" class="goto" aria-label="Go to a passage" title="Go to a reference (Ctrl+K)">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M4 12h6M4 17h9" /><path d="M15 8l5 4-5 4" /></svg>
+          <span class="label long">Go to a passage</span><span class="label short">Go to</span><kbd>Ctrl K</kbd>
+        </button>
+        <button id="btn-search" title="Search (Ctrl+F)">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L20 20" /></svg>
+          <span class="label">Search</span>
+        </button>
+        <button id="btn-study" title="Notes, highlights, bookmarks and history">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" /></svg>
+          <span class="label">Study</span>
+        </button>
+        <button id="btn-videos" title="Videos" hidden>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M10 9.2l4.8 2.8-4.8 2.8z" /></svg>
+          <span class="label">Videos</span>
+        </button>
+        <button id="btn-settings" title="Settings">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h3M11 6.5h9M4 12h9M17 12h3M4 17.5h1M9 17.5h11" /><circle cx="9" cy="6.5" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="7" cy="17.5" r="2" /></svg>
+          <span class="label">Settings</span>
+        </button>
+      </nav>
+    </header>
+
+    <div id="parallel-bar" class="parallel-bar" hidden></div>
+
+    <div class="workspace">
+      <main id="reader" class="reader" tabindex="-1"></main>
+      <aside id="panel" class="panel" aria-label="Side panel" hidden></aside>
+    </div>
+
+    <div id="selection-bar" class="selection-bar" role="toolbar" aria-label="Selected verses" hidden></div>
+    <div id="overlay" class="overlay" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

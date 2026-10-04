@@ -1,0 +1,11 @@
+# Checkouts keep Unix line endings everywhere, including on Windows, where the
+# tests and the scripts read these files as they are written here.
+* text=auto eol=lf
+*.bat text eol=crlf
+
+*.grtb binary
+*.grt binary
+*.png binary
+*.ico binary
+*.icns binary
+*.jar binary
