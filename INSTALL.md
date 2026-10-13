@@ -1,6 +1,6 @@
 # Installing GRT Bible
 
-The program is at version **0.1.0**, and the same version runs on Linux, on
+The program is at version **0.1.1**, and the same version runs on Linux, on
 Windows and on Android.
 
 The eight translations are inside every package. Nothing is downloaded on first
@@ -17,26 +17,26 @@ them.
 administrator rights, and it runs from anywhere:
 
 ```bash
-chmod +x grt-bible-0.1.0-linux-x86_64.AppImage
-./grt-bible-0.1.0-linux-x86_64.AppImage
+chmod +x grt-bible-0.1.1-linux-x86_64.AppImage
+./grt-bible-0.1.1-linux-x86_64.AppImage
 ```
 
 The `.deb` and `.rpm` beside it install through the package manager instead,
 which puts the program in the application menu:
 
 ```bash
-sudo apt install ./grt-bible-0.1.0-linux-x86_64.deb     # Debian, Ubuntu
-sudo dnf install ./grt-bible-0.1.0-linux-x86_64.rpm     # Fedora
+sudo apt install ./grt-bible-0.1.1-linux-x86_64.deb     # Debian, Ubuntu
+sudo dnf install ./grt-bible-0.1.1-linux-x86_64.rpm     # Fedora
 ```
 
-**Windows.** Take `grt-bible-0.1.0-windows-x86_64-setup.exe`. It is not
+**Windows.** Take `grt-bible-0.1.1-windows-x86_64-setup.exe`. It is not
 code-signed, so Windows will warn about an unknown publisher.
 
 **Android.** Take the `.apk` and copy it to the phone, or install it over a
 cable:
 
 ```bash
-adb install grt-bible-0.1.0-android-arm64.apk
+adb install grt-bible-0.1.1-android-arm64.apk
 ```
 
 Opening it on the phone asks once for permission to install an application that
