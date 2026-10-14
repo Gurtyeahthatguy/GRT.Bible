@@ -1449,7 +1449,7 @@ dependencies = [
 
 [[package]]
 name = "grt-bible"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "grtb",
  "serde",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "grt-container"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "serde",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "grtb"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bzip2-rs",
  "flate2",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "grtb-convert"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "grtb",
  "serde",
