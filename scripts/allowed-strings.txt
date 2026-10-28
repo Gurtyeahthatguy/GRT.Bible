@@ -24,3 +24,7 @@ https://android.googlesource.com/toolchain/llvm-project
 
 # Doctype names in html5ever's table, which the Android build carries and nothing fetches.
 http://www.ibm.com/data/dtd
+
+# Addresses MODULES.md gives the reader, shown as text in the guide and never opened.
+https://www.crosswire.org
+https://ebible.org

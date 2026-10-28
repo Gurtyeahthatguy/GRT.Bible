@@ -1,5 +1,7 @@
-# Builds the packages for Linux and Windows and attaches them to a release.
-# Triggered by a tag such as v0.1.0, which must match tauri.conf.json.
+# Builds the packages for Linux and Windows and attaches them, with the study
+# packs, to a release. Triggered by a tag such as v0.2.0, which must match
+# tauri.conf.json. The Android package is signed with a key kept off GitHub:
+# scripts/release-android.sh attaches it once this workflow has published.
 
 name: release
 
@@ -104,6 +106,9 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Study packs
+        run: cp packs/*.grtb dist/
+
       - name: Checksums
         working-directory: dist
         run: sha256sum * > SHA256SUMS
@@ -121,8 +126,13 @@ jobs:
             echo
             echo "The Android \`.apk\` is built and signed on the maintainer's"
             echo "machine, since the signing key is not in this repository, and"
-            echo "attached here by hand. Phones accept an update only if it"
-            echo "carries the same signature as the version already installed."
+            echo "attached here by \`scripts/release-android.sh\`. Phones accept"
+            echo "an update only if it carries the same signature as the version"
+            echo "already installed."
+            echo
+            echo "The \`.grtb\` files are study packs, installed from the library:"
+            echo "\`TSK.grtb\` holds the Treasury of Scripture Knowledge. MODULES.md"
+            echo "in the repository explains every step on every system."
             echo
             echo "The translations are inside every package. GRT Bible reads"
             echo "them offline; the only thing that touches the network is a"
@@ -143,3 +153,6 @@ jobs:
             --title "GRT Bible ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
             dist/*
+
+      - name: Android, by hand
+        run: echo "::notice::Run scripts/release-android.sh $GITHUB_REF_NAME on the machine that holds the signing key."

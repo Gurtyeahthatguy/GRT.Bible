@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use grtb::assemble::{assemble, date_from_unix, Description};
+use grtb::assemble::{assemble, assemble_resource, date_from_unix, Description};
 use grtb::catalog::{self, Catalog};
 use grtb::module::{self, BookContent, Module};
 use grtb::source::{arrange, read_usfm, sha256_hex};
@@ -19,6 +19,8 @@ Usage:
   grtb-convert martini <file.rtf>        [options] -o <out.grtb>
   grtb-convert n1904   <file.csv>        [options] -o <out.grtb>
   grtb-convert sword   <folder|zip>      [options] -o <out.grtb>
+                       a commentary, dictionary or book keeps its kind;
+                       --as crossrefs reads a commentary as cross-references
   grtb-convert catalog <folder>                    -o <out.grt>
   grtb-convert info    <module.grtb>
 
@@ -169,6 +171,23 @@ fn run() -> Result<(), String> {
             let books = n1904::parse(&String::from_utf8_lossy(&bytes))?;
             write_module(&args, books, &sha256_hex(&bytes))
         }
+        "sword" if grtb::sword::kind_of(&grtb::sword::probe(&args.input)?) != Some("bible") => {
+            let conf = grtb::sword::probe(&args.input)?;
+            let mut options = args.options.clone();
+            options.entry("versification".into()).or_insert_with(|| grtb::sword::scheme_for(conf.get("Versification").unwrap_or("KJV")).into());
+            let args = Args { options, ..args };
+            let numbering = grtb::versification::scheme(&args.options["versification"]);
+            let read = grtb::sword::read_resource(&args.input, args.options.get("as").map(String::as_str), numbering)?;
+            for w in &read.warnings {
+                eprintln!("warning: {w}");
+            }
+            let features = read.conf.values.get("Feature").map(|f| f.lines().map(str::to_string).collect()).unwrap_or_default();
+            let output = args.output.as_ref().ok_or("-o is required")?;
+            let content = assemble_resource(&description(&args)?, read.kind, read.entries, read.links, features, &generation_date(&args), &read.hash);
+            module::write(output, &content)?;
+            println!("{}: {} with {} entries and {} groups of references", output.display(), read.kind, content.entries.len(), content.links.len());
+            Ok(())
+        }
         "sword" => {
             let sword = grtb::sword::open(&args.input)?;
             for w in &sword.warnings {
@@ -184,6 +203,9 @@ fn run() -> Result<(), String> {
         "info" => {
             let m = Module::open(&args.input)?;
             println!("{}", serde_json::to_string_pretty(&m.manifest).unwrap());
+            if m.kind() != "bible" {
+                println!("{} entries", m.entry_count()?);
+            }
             if let Some(report) = &m.integrity {
                 println!("{}", grtb::integrity::summary(report));
             }

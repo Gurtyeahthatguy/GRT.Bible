@@ -42,6 +42,18 @@ export const api = {
   importModule: (path, choices) => invoke('import_module', { path, choices }),
   removeModule: (module) => invoke('module_remove', { module }),
   moduleReport: (module) => invoke('module_report', { module }),
+  installModule: (path) => invoke('module_install', { path }),
+  passage: (module, first, last) => invoke('passage', { module, first, last }),
+  commentary: (module, at) => invoke('commentary', { module, at }),
+  commentaryStep: (module, at, forward) => invoke('commentary_step', { module, at, forward }),
+  crossrefs: (at) => invoke('crossrefs', { at }),
+  entry: (module, id) => invoke('entry', { module, id }),
+  entryByKey: (module, key) => invoke('entry_by_key', { module, key }),
+  lookup: (module, text, limit = 60) => invoke('lookup', { module, text, limit }),
+  sections: (module, parent = null) => invoke('sections', { module, parent }),
+  saveText: (path, text) => invoke('save_text', { path, text }),
+  guide: () => invoke('guide'),
+  printPage: (width, height) => invoke('print_page', { width, height }),
 };
 
 // Android's picker filters by MIME type, and these file types have none, so it offers every file.

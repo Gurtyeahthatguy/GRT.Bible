@@ -60,6 +60,24 @@ pub struct Bookmark {
     pub label: String,
 }
 
+/// A named list of videos the reader keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoList {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub videos: Vec<String>,
+}
+
+/// A video the reader tied to a passage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoAnchor {
+    pub id: String,
+    pub video: String,
+    pub start: Ref,
+    pub end: Ref,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserData {
     pub reading: Reading,
@@ -67,6 +85,10 @@ pub struct UserData {
     pub highlights: Vec<Highlight>,
     pub bookmarks: Vec<Bookmark>,
     pub saved_videos: Vec<String>,
+    #[serde(default)]
+    pub video_lists: Vec<VideoList>,
+    #[serde(default)]
+    pub video_anchors: Vec<VideoAnchor>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,6 +117,10 @@ struct BookmarksBody {
 #[derive(Serialize, Deserialize)]
 struct VideosBody {
     saved: Vec<String>,
+    #[serde(default)]
+    lists: Vec<VideoList>,
+    #[serde(default)]
+    anchors: Vec<VideoAnchor>,
 }
 
 fn json<T: Serialize>(body: T) -> Result<Vec<u8>, String> {
@@ -128,7 +154,10 @@ impl UserData {
             Entry::new(PARTS[1], json(NotesBody { notes: self.notes.clone() })?),
             Entry::new(PARTS[2], json(HighlightsBody { highlights: self.highlights.clone() })?),
             Entry::new(PARTS[3], json(BookmarksBody { bookmarks: self.bookmarks.clone() })?),
-            Entry::new(PARTS[4], json(VideosBody { saved: self.saved_videos.clone() })?),
+            Entry::new(
+                PARTS[4],
+                json(VideosBody { saved: self.saved_videos.clone(), lists: self.video_lists.clone(), anchors: self.video_anchors.clone() })?,
+            ),
         ];
         write_archive(entries).map_err(|e| e.to_string())
     }
@@ -157,12 +186,16 @@ impl UserData {
                 }
             }
         }
+        let videos = part::<VideosBody>(find(PARTS[4]))?;
+        let (saved_videos, video_lists, video_anchors) = videos.map(|b| (b.saved, b.lists, b.anchors)).unwrap_or_default();
         Ok(UserData {
             reading: part::<Reading>(find(PARTS[0]))?.unwrap_or_default(),
             notes: part::<NotesBody>(find(PARTS[1]))?.map(|b| b.notes).unwrap_or_default(),
             highlights: part::<HighlightsBody>(find(PARTS[2]))?.map(|b| b.highlights).unwrap_or_default(),
             bookmarks: part::<BookmarksBody>(find(PARTS[3]))?.map(|b| b.bookmarks).unwrap_or_default(),
-            saved_videos: part::<VideosBody>(find(PARTS[4]))?.map(|b| b.saved).unwrap_or_default(),
+            saved_videos,
+            video_lists,
+            video_anchors,
         })
     }
 }
@@ -187,6 +220,13 @@ mod tests {
         });
         data.bookmarks.push(Bookmark { id: "b1".into(), reference: Ref::parse("John.3.16").unwrap(), label: String::new() });
         data.saved_videos.push("ps23".into());
+        data.video_lists.push(VideoList { id: "l1".into(), name: "Psalms".into(), videos: vec!["ps23".into()] });
+        data.video_anchors.push(VideoAnchor {
+            id: "a1".into(),
+            video: "ps23".into(),
+            start: Ref::parse("Ps.23.1").unwrap(),
+            end: Ref::parse("Ps.23.4").unwrap(),
+        });
         data
     }
 
@@ -209,6 +249,19 @@ mod tests {
         let text = String::from_utf8(notes.data.clone()).unwrap();
         assert!(text.contains("\"start\": \"Sir.24.3\""));
         assert!(text.contains("\"scheme\": \"hebrew\""));
+    }
+
+    #[test]
+    fn a_file_from_0_1_without_lists_still_reads() {
+        let mut old = sample();
+        old.video_lists.clear();
+        old.video_anchors.clear();
+        let bytes = old.to_archive().unwrap();
+        let mut entries = read_archive(&bytes).unwrap();
+        let videos = entries.iter_mut().find(|e| e.name == "content/videos.json").unwrap();
+        videos.data = b"{\"version\": 1, \"scheme\": \"hebrew\", \"saved\": [\"ps23\"]}".to_vec();
+        let rewritten = write_archive(entries).unwrap();
+        assert_eq!(UserData::from_archive(&rewritten).unwrap(), old);
     }
 
     #[test]

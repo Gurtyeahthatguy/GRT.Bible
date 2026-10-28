@@ -3,6 +3,7 @@
 import { api, onAndroid, pickFile } from './api.js';
 import { clear, h } from './dom.js';
 import { toast } from './overlay.js';
+import { compareOsis } from './reference.js';
 
 const PAGE = 40;
 export const CATEGORIES = ['Theology', 'Doctrine', 'Debates'];
@@ -19,6 +20,31 @@ async function catalog() {
     cache = Array.isArray(reply) ? { channels: [], videos: reply } : reply;
   }
   return cache;
+}
+
+function newId(prefix) {
+  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+const overlaps = (start, end, a, b) => compareOsis(start, b) <= 0 && compareOsis(end, a) >= 0;
+
+/** For each verse of a chapter, the videos the reader linked starting there or earlier. */
+export function anchorsByVerse(anchors, verses) {
+  const out = new Map();
+  for (const anchor of anchors || []) {
+    const verse = verses.find((v) => overlaps(v.canon, v.canonEnd || v.canon, anchor.start, anchor.end));
+    if (!verse) continue;
+    const list = out.get(verse.verse) || [];
+    if (!list.includes(anchor.video)) list.push(anchor.video);
+    out.set(verse.verse, list);
+  }
+  return out;
+}
+
+/** Whether a video speaks about a range, by the catalogue or by the reader's own links. */
+export function videoTouches(video, anchors, start, end) {
+  const own = anchors.some((a) => a.video === video.id && overlaps(a.start, a.end, start, end));
+  return own || (video.refs || []).some((r) => overlaps(r.start, r.end || r.start, start, end));
 }
 
 function duration(seconds) {
@@ -42,9 +68,10 @@ async function openWith(button, action, done) {
   }
 }
 
-function card(video, channel, ctx) {
+function card(video, channel, ctx, redraw) {
   const user = ctx.user();
   const saved = user.saved_videos.includes(video.id);
+  const selection = ctx.selectionRange?.();
   const save = h('button', {
     class: 'quiet',
     'aria-pressed': saved ? 'true' : 'false',
@@ -59,20 +86,86 @@ function card(video, channel, ctx) {
     },
   }, saved ? 'Saved' : 'Save');
   const open = h('button', { onclick: () => openWith(open, () => api.openVideo(video.id), opened(video.host)) }, onAndroid() ? 'Watch' : 'Open in browser');
+  const anchors = user.video_anchors.filter((a) => a.video === video.id);
+  const linked = selection && anchors.some((a) => a.start === selection.start && a.end === selection.end);
+  const link = selection && !linked ? h('button', {
+    class: 'quiet',
+    title: 'Show this video beside the verses you selected',
+    onclick: () => {
+      user.video_anchors.push({ id: newId('a'), video: video.id, start: selection.start, end: selection.end });
+      ctx.saveUser();
+      ctx.refresh();
+      toast(`Linked to ${selection.label}`);
+    },
+  }, `Link to ${selection.label}`) : null;
+  const lists = user.video_lists;
+  const listPicker = lists.length ? h('select', { 'aria-label': 'Add to a list' },
+    h('option', { value: '' }, 'Add to a list…'),
+    lists.map((l) => h('option', { value: l.id }, `${l.videos.includes(video.id) ? '✓ ' : ''}${l.name}`))) : null;
+  listPicker?.addEventListener('change', () => {
+    const list = lists.find((l) => l.id === listPicker.value);
+    if (!list) return;
+    const at = list.videos.indexOf(video.id);
+    if (at >= 0) list.videos.splice(at, 1);
+    else list.videos.push(video.id);
+    ctx.saveUser();
+    toast(at >= 0 ? `Removed from ${list.name}` : `Added to ${list.name}`);
+    redraw();
+  });
   return h('article', { class: 'card video', dataset: { video: video.id } },
     video.thumb ? h('img', { src: video.thumb, alt: '', class: 'thumb', loading: 'lazy' }) : null,
     h('div', { class: 'video-body' },
       h('h3', {}, video.title),
       h('p', { class: 'muted' }, [channel?.name || video.source, video.category, duration(video.durationS)].filter(Boolean).join(' · ')),
       video.description ? h('p', {}, video.description) : null,
-      h('div', { class: 'row' }, open, save)));
+      anchors.length ? h('p', { class: 'tags' }, anchors.map((a) => h('span', { class: 'tag' },
+        h('button', { class: 'link', onclick: () => ctx.openRange(a.start, a.end) }, ctx.osisLabel(a.start, a.end)),
+        h('button', {
+          class: 'link',
+          'aria-label': 'Remove this link',
+          title: 'Remove this link',
+          onclick: () => {
+            user.video_anchors = user.video_anchors.filter((x) => x.id !== a.id);
+            ctx.saveUser();
+            ctx.refresh();
+          },
+        }, ' ×')))) : null,
+      h('div', { class: 'row' }, open, save, link, listPicker)));
+}
+
+/** The reader's own lists: made, renamed and deleted here. */
+function listManager(ctx, redraw) {
+  const user = ctx.user();
+  const name = h('input', { type: 'text', placeholder: 'Name of a new list', 'aria-label': 'Name of a new list', maxlength: 60 });
+  const create = h('button', {
+    onclick: () => {
+      const text = name.value.trim();
+      if (!text) return;
+      user.video_lists.push({ id: newId('l'), name: text, videos: [] });
+      ctx.saveUser();
+      redraw();
+    },
+  }, 'Create');
+  return h('details', { class: 'channels' },
+    h('summary', {}, `Your lists (${user.video_lists.length})`),
+    h('ul', {}, user.video_lists.map((l) => h('li', {},
+      h('span', {}, l.name), h('span', { class: 'muted' }, ` ${l.videos.length} videos`),
+      h('button', {
+        class: 'quiet danger',
+        onclick: () => {
+          user.video_lists = user.video_lists.filter((x) => x.id !== l.id);
+          ctx.saveUser();
+          redraw();
+        },
+      }, 'Delete')))),
+    h('div', { class: 'row' }, name, create));
 }
 
 function option(value, label) {
   return h('option', { value }, label);
 }
 
-export async function renderVideos(container, ctx, chapterOnly = false) {
+export async function renderVideos(container, ctx, options = {}) {
   let data;
   try {
     data = await catalog();
@@ -109,6 +202,9 @@ export async function renderVideos(container, ctx, chapterOnly = false) {
 
   const byChannel = new Map(channels.map((c) => [c.id, c]));
   const chapterIds = new Set(ctx.chapterVideos());
+  const user = ctx.user();
+  const selection = ctx.selectionRange?.();
+  const at = options.at || null;
   const categories = CATEGORIES.filter((c) => videos.some((v) => v.category === c));
   for (const v of videos) {
     if (v.category && !categories.includes(v.category)) categories.push(v.category);
@@ -125,8 +221,11 @@ export async function renderVideos(container, ctx, chapterOnly = false) {
   const scope = h('select', { 'aria-label': 'Which videos' },
     option('all', 'All videos'),
     option('chapter', `About this chapter (${chapterIds.size})`),
-    option('saved', 'Saved'));
-  scope.value = chapterOnly && chapterIds.size ? 'chapter' : 'all';
+    selection ? option('selection', `About ${selection.label}`) : null,
+    at ? option('verse', 'About this verse') : null,
+    option('saved', 'Saved'),
+    user.video_lists.map((l) => option(`list:${l.id}`, `${l.name} (${l.videos.length})`)));
+  scope.value = options.scope === 'verse' && at ? 'verse' : options.scope === 'chapter' && chapterIds.size ? 'chapter' : 'all';
 
   const channelList = h('details', { class: 'channels' },
     h('summary', {}, `Channels (${channels.length})`),
@@ -152,19 +251,23 @@ export async function renderVideos(container, ctx, chapterOnly = false) {
 
   const page = () => {
     const next = shown.slice(drawn, drawn + PAGE);
-    list.append(...next.map((v) => card(v, byChannel.get(v.channel), ctx)));
+    list.append(...next.map((v) => card(v, byChannel.get(v.channel), ctx, draw)));
     drawn += next.length;
     more.hidden = drawn >= shown.length;
   };
 
   const draw = () => {
     const needle = filter.value.trim().toLowerCase();
-    const saved = new Set(ctx.user().saved_videos);
+    const saved = new Set(user.saved_videos);
+    const listed = scope.value.startsWith('list:') ? new Set(user.video_lists.find((l) => `list:${l.id}` === scope.value)?.videos || []) : null;
     shown = videos.filter((v) =>
       (!category.value || v.category === category.value)
       && (!channel.value || v.channel === channel.value)
       && (scope.value !== 'chapter' || chapterIds.has(v.id))
+      && (scope.value !== 'selection' || videoTouches(v, user.video_anchors, selection.start, selection.end))
+      && (scope.value !== 'verse' || videoTouches(v, user.video_anchors, at, at))
       && (scope.value !== 'saved' || saved.has(v.id))
+      && (!listed || listed.has(v.id))
       && (!needle || v.title.toLowerCase().includes(needle)));
     clear(list);
     drawn = 0;
@@ -181,8 +284,10 @@ export async function renderVideos(container, ctx, chapterOnly = false) {
   for (const control of [category, channel, scope]) control.addEventListener('change', draw);
   more.addEventListener('click', page);
 
+  const lists = listManager(ctx, () => ctx.refresh());
   container.append(
     h('div', { class: 'search-form' }, filter, h('div', { class: 'row' }, category, channel), h('div', { class: 'row' }, scope, importButton)),
-    channelList, status, list, more, notice);
+    selection ? h('p', { class: 'fine' }, `Selected: ${selection.label}. A video's “Link to” button shows it beside these verses.`) : null,
+    channelList, lists, status, list, more, notice);
   draw();
 }

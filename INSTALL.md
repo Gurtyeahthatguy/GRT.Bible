@@ -1,10 +1,12 @@
 # Installing GRT Bible
 
-The program is at version **0.1.2**, and the same version runs on Linux, on
+The program is at version **0.2.0**, and the same version runs on Linux, on
 Windows and on Android.
 
 The eight translations are inside every package. Nothing is downloaded on first
-run, and nothing has to be set up afterwards.
+run, and nothing has to be set up afterwards. Study packs, such as the
+cross-references in `TSK.grtb`, sit beside the packages on the release page and
+are installed from the library: [MODULES.md](MODULES.md) has every step.
 
 ---
 
@@ -17,26 +19,26 @@ them.
 administrator rights, and it runs from anywhere:
 
 ```bash
-chmod +x grt-bible-0.1.2-linux-x86_64.AppImage
-./grt-bible-0.1.2-linux-x86_64.AppImage
+chmod +x grt-bible-0.2.0-linux-x86_64.AppImage
+./grt-bible-0.2.0-linux-x86_64.AppImage
 ```
 
 The `.deb` and `.rpm` beside it install through the package manager instead,
 which puts the program in the application menu:
 
 ```bash
-sudo apt install ./grt-bible-0.1.2-linux-x86_64.deb     # Debian, Ubuntu
-sudo dnf install ./grt-bible-0.1.2-linux-x86_64.rpm     # Fedora
+sudo apt install ./grt-bible-0.2.0-linux-x86_64.deb     # Debian, Ubuntu
+sudo dnf install ./grt-bible-0.2.0-linux-x86_64.rpm     # Fedora
 ```
 
-**Windows.** Take `grt-bible-0.1.2-windows-x86_64-setup.exe`. It is not
+**Windows.** Take `grt-bible-0.2.0-windows-x86_64-setup.exe`. It is not
 code-signed, so Windows will warn about an unknown publisher.
 
 **Android.** Take the `.apk` and copy it to the phone, or install it over a
 cable:
 
 ```bash
-adb install grt-bible-0.1.2-android-arm64.apk
+adb install grt-bible-0.2.0-android-arm64.apk
 ```
 
 Opening it on the phone asks once for permission to install an application that
@@ -125,6 +127,15 @@ password=whatever you typed
 Without that file the build still runs and leaves the APK unsigned, which no
 phone will install.
 
+For a release, once the workflow has published the tag:
+
+```bash
+./scripts/release-android.sh v0.2.0
+```
+
+builds and signs the APK, attaches it to the release and adds its line to
+`SHA256SUMS`. It needs `gh`, logged in to the repository.
+
 ### Rebuilding the translations
 
 The `.grtb` files in `modules/` are generated and committed, so a normal build
@@ -133,6 +144,13 @@ under `sources/` and run:
 
 ```bash
 ./scripts/convert-modules.sh
+```
+
+The study packs in `packs/` are rebuilt the same way from the SWORD modules in
+`sources/packs/`:
+
+```bash
+./scripts/convert-packs.sh
 ```
 
 The converter is deterministic: the same source gives the same file, byte for
@@ -146,8 +164,9 @@ cargo run --release -p grtb-convert -- info modules/MAR.grtb
 
 ## Where your data is
 
-Reading position, history, notes, highlights, bookmarks and saved videos are in
-one file, `user.grt`. Imported translations and an imported video catalog sit
+Reading position, history, notes, highlights, bookmarks, saved videos and video
+lists are in one file, `user.grt`. Installed modules, in `modules/`, the list of
+the files they came from, `origins.json`, and an imported video catalog sit
 beside it.
 
 | | Linux | Windows | Android |

@@ -2,6 +2,8 @@ package org.grt.bible
 
 import android.graphics.Color
 import android.os.Bundle
+import android.print.PrintAttributes
+import android.print.PrintManager
 import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -25,6 +27,25 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     webView.addJavascriptInterface(SystemBars(), "grtSystemBars")
+    webView.addJavascriptInterface(Printer(webView), "grtPrint")
+  }
+
+  /** Hands the page to the system's print service, which also saves it as a PDF. */
+  inner class Printer(private val webView: WebView) {
+    @JavascriptInterface
+    fun print(title: String, paper: String) {
+      val media = when (paper) {
+        "a5" -> PrintAttributes.MediaSize.ISO_A5
+        "letter" -> PrintAttributes.MediaSize.NA_LETTER
+        else -> PrintAttributes.MediaSize.ISO_A4
+      }
+      runOnUiThread {
+        val manager = getSystemService(PRINT_SERVICE) as PrintManager
+        val name = title.take(80).ifBlank { "GRT Bible" }
+        val attributes = PrintAttributes.Builder().setMediaSize(media).build()
+        manager.print(name, webView.createPrintDocumentAdapter(name), attributes)
+      }
+    }
   }
 
   /** Lets the page paint the strips behind the system bars in the colours of its theme. */

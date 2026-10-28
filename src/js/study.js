@@ -1,7 +1,8 @@
 /** The reader's own material: verse of the day, notes, highlights, bookmarks and history. */
 
-import { api } from './api.js';
+import { api, pickSave } from './api.js';
 import { h } from './dom.js';
+import { toast } from './overlay.js';
 import { compareOsis } from './reference.js';
 import { HIGHLIGHT_COLORS } from './settings.js';
 
@@ -51,6 +52,23 @@ async function today(container, ctx) {
   );
 }
 
+/** Notes as one Markdown file in the shape GRT Notes and other Markdown notebooks read. */
+export function notesMarkdown(entries, { module, date }) {
+  const lines = ['---', 'title: Notes from GRT Bible', 'tags:', '  - bible', `created: ${date}`, '---', '', '# Notes from GRT Bible', ''];
+  for (const { label, text, note } of entries) {
+    lines.push(`## ${label} (${module})`, '');
+    if (text) lines.push(...text.split('\n').map((l) => `> ${l}`), '');
+    const body = (note.text || '').trim();
+    if (body) lines.push(body, '');
+  }
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+function isoDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 async function notes(container, ctx) {
   const user = ctx.user();
   if (!user.notes.length) {
@@ -59,6 +77,22 @@ async function notes(container, ctx) {
   }
   const sorted = [...user.notes].sort((a, b) => compareOsis(a.start, b.start));
   const described = await describe(ctx, sorted.map((n) => n.start));
+  const module = ctx.module();
+  container.append(h('div', { class: 'row' },
+    h('button', {
+      onclick: async () => {
+        const path = await pickSave('Export your notes', 'GRT Bible notes.md', [{ name: 'Markdown', extensions: ['md'] }]);
+        if (!path) return;
+        try {
+          const entries = sorted.map((note, i) => ({ note, label: described[i].label, text: described[i].text }));
+          await api.saveText(path, notesMarkdown(entries, { module: module.abbreviation, date: isoDate() }));
+          toast('Your notes were exported as Markdown.');
+        } catch (error) {
+          toast(String(error), 5000);
+        }
+      },
+    }, 'Export as Markdown…'),
+    h('button', { class: 'quiet', onclick: () => ctx.print('notes') }, 'Print…')));
   for (const [i, note] of sorted.entries()) {
     const d = described[i];
     const area = h('textarea', { class: 'note-text', rows: 4, 'aria-label': `Note on ${d.label}`, dataset: { note: note.id } });

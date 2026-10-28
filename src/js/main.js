@@ -2,24 +2,28 @@
 
 import { api, setPlatform } from './api.js';
 import { BY_OSIS, nameIn } from './books.js';
-import { copyText } from './copy.js';
+import { copyHtml, copyText } from './copy.js';
 import { $, $$, clear, debounce, h } from './dom.js';
 import { openNavigator } from './navigator.js';
 import { closeOverlay, isOpen, toast } from './overlay.js';
 import { openPalette } from './palette.js';
+import { libraryTabs, renderLibrary } from './library.js';
 import { askAboutVideos, openPreferences } from './preferences.js';
+import { closePrint, openPrint, printPreviewOpen } from './print.js';
 import { renderChapter, renderParallel } from './reader.js';
-import { compareOsis, formatReference } from './reference.js';
+import { compareOsis, formatReference, splitOsis } from './reference.js';
 import { renderSearch } from './search.js';
 import { applyAppearance, HIGHLIGHT_COLORS, normalise } from './settings.js';
 import { renderStudy, STUDY_TABS } from './study.js';
-import { renderVideos } from './videos.js';
+import { anchorsByVerse, renderVideos } from './videos.js';
 
 const HISTORY_LIMIT = 100;
 
 const state = {
   version: '',
   platform: '',
+  /** Every installed module; `modules` are the Bibles among them. */
+  all: [],
   modules: [],
   settings: normalise({}),
   user: null,
@@ -32,6 +36,7 @@ const state = {
   anchor: null,
   panel: null,
   studyTab: 'today',
+  libraryTab: 'passage',
 };
 
 export function normaliseUser(raw) {
@@ -45,7 +50,15 @@ export function normaliseUser(raw) {
     highlights: Array.isArray(user.highlights) ? user.highlights : [],
     bookmarks: Array.isArray(user.bookmarks) ? user.bookmarks : [],
     saved_videos: Array.isArray(user.saved_videos) ? user.saved_videos : [],
+    video_lists: Array.isArray(user.video_lists) ? user.video_lists : [],
+    video_anchors: Array.isArray(user.video_anchors) ? user.video_anchors : [],
   };
+}
+
+/** Bibles first, the way the translation list wants them. */
+function setModules(all) {
+  state.all = all.map((m) => (m.kind ? m : { ...m, kind: 'bible' }));
+  state.modules = state.all.filter((m) => m.kind === 'bible');
 }
 
 const moduleInfo = (abbr = state.module) => state.modules.find((m) => m.abbreviation === abbr) || null;
@@ -175,6 +188,7 @@ async function openPlace(module, book, chapter, verse = null, verseEnd = null, {
   state.anchor = null;
   if (data.verses.length) visit(data.verses[0].canon);
   render();
+  if (state.panel === 'library' && state.libraryTab === 'passage') refreshLibrarySoon();
   scrollToVerse(verse, offset);
   if (select && verse) {
     const last = verseEnd && verseEnd >= verse ? verseEnd : verse;
@@ -215,7 +229,8 @@ function render() {
       bookName: bookName(info, state.book),
       settings: state.settings,
       user: state.user,
-      videos: state.settings.videos ? state.data.videos : [],
+      videos: state.settings.videos ? chapterVideoIds() : [],
+      anchors: state.settings.videos ? anchorsByVerse(state.user.video_anchors, state.data.verses) : new Map(),
     });
   }
   clear(reader, content);
@@ -314,6 +329,8 @@ function showSelection() {
   const first = verses[0];
   const last = verses[verses.length - 1];
   const bookmarked = state.user.bookmarks.some((b) => b.ref === first.canon);
+  if (state.panel === 'library' && state.libraryTab === 'passage') refreshLibrarySoon();
+  if (state.panel === 'videos') refreshPanelSoon();
   clear(bar,
     h('span', { class: 'selection-label' }, selectionLabel(verses)),
     h('button', { onclick: () => copySelection() }, 'Copy'),
@@ -346,6 +363,14 @@ function showSelection() {
         refreshPanel();
       },
     }, bookmarked ? 'Bookmarked' : 'Bookmark'),
+    h('button', {
+      title: 'Cross-references and commentary on these verses',
+      onclick: () => {
+        state.libraryTab = 'passage';
+        showPanel('library');
+      },
+    }, 'References'),
+    h('button', { title: 'Print these verses', onclick: () => print('selection') }, 'Print'),
     h('button', { class: 'quiet', 'aria-label': 'Clear selection', onclick: clearSelection }, 'Close'));
   bar.hidden = false;
 }
@@ -354,6 +379,8 @@ function clearSelection() {
   state.selection = [];
   state.anchor = null;
   showSelection();
+  if (state.panel === 'library' && state.libraryTab === 'passage') refreshLibrarySoon();
+  if (state.panel === 'videos') refreshPanelSoon();
 }
 
 function highlight(color) {
@@ -368,7 +395,17 @@ function highlight(color) {
   refreshPanel();
 }
 
-async function writeClipboard(text) {
+/** Text and, for programs that take it, the same quotation as HTML. */
+let pendingCopy = null;
+
+async function writeClipboard(text, html = null) {
+  if (html) {
+    // The copy event carries both forms; the asynchronous clipboard is not always allowed to.
+    pendingCopy = { text, html };
+    const done = document.execCommand?.('copy');
+    pendingCopy = null;
+    if (done) return;
+  }
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -381,10 +418,10 @@ async function writeClipboard(text) {
   }
 }
 
-function copyPayload(verses, excerpt = null) {
+function copyArgs(verses, excerpt = null) {
   const info = moduleInfo();
   const own = info.books.find((b) => b.osis === state.book);
-  return copyText({
+  return {
     verses: verses.map((v) => ({ chapter: state.chapter, verse: v.verse, text: v.text })),
     excerpt,
     book: state.book,
@@ -392,13 +429,17 @@ function copyPayload(verses, excerpt = null) {
     abbrev: own?.abbrev,
     module: info.abbreviation,
     options: state.settings.copy,
-  });
+  };
+}
+
+function copyPayload(verses, excerpt = null) {
+  return copyText(copyArgs(verses, excerpt));
 }
 
 async function copySelection() {
   const verses = selectedVerses();
   if (!verses.length) return false;
-  await writeClipboard(copyPayload(verses));
+  await writeClipboard(copyPayload(verses), copyHtml(copyArgs(verses)));
   toast(`Copied ${selectionLabel(verses)}`);
   return true;
 }
@@ -432,11 +473,12 @@ export function swipeDirection(start, end) {
 const back = { listener: null, queue: Promise.resolve() };
 
 function layerOpen() {
-  return isOpen() || !$('#selection-bar').hidden || !$('#panel').hidden;
+  return printPreviewOpen() || isOpen() || !$('#selection-bar').hidden || !$('#panel').hidden;
 }
 
 function closeTopLayer() {
-  if (isOpen()) closeOverlay();
+  if (printPreviewOpen()) closePrint();
+  else if (isOpen()) closeOverlay();
   else if (state.selection.length) clearSelection();
   else if (state.panel) hidePanel();
 }
@@ -465,9 +507,22 @@ async function showPanel(kind, options = {}) {
   panel.hidden = false;
   const body = h('div', { class: 'panel-body' });
   const close = h('button', { class: 'quiet', 'aria-label': 'Close panel', onclick: hidePanel }, 'Close');
-  const titles = { search: 'Search', study: 'Study', videos: 'Videos' };
+  const titles = { search: 'Search', study: 'Study', videos: 'Videos', library: 'Library' };
   const header = h('header', { class: 'panel-head' }, h('h2', {}, titles[kind]), close);
   const parts = [header];
+  if (kind === 'library') {
+    const tabs = libraryTabs(state.all);
+    if (!tabs.some((t) => t.id === state.libraryTab)) state.libraryTab = 'passage';
+    if (state.settings.library.tab !== state.libraryTab) setSetting('library', { ...state.settings.library, tab: state.libraryTab });
+    parts.push(h('nav', { class: 'tabs', role: 'tablist' }, tabs.map((t) => h('button', {
+      role: 'tab',
+      'aria-selected': t.id === state.libraryTab ? 'true' : 'false',
+      onclick: () => {
+        state.libraryTab = t.id;
+        showPanel('library');
+      },
+    }, t.label))));
+  }
   if (kind === 'study') {
     parts.push(h('nav', { class: 'tabs', role: 'tablist' }, STUDY_TABS.map((t) => h('button', {
       role: 'tab',
@@ -486,18 +541,28 @@ async function showPanel(kind, options = {}) {
   } else if (kind === 'study') {
     await renderStudy(body, state.studyTab, ctx);
   } else if (kind === 'videos') {
-    await renderVideos(body, ctx, options.chapterOnly);
+    await renderVideos(body, ctx, options);
+  } else if (kind === 'library') {
+    await renderLibrary(body, state.libraryTab, libraryCtx, options);
   }
-  for (const [id, k] of [['#btn-search', 'search'], ['#btn-study', 'study'], ['#btn-videos', 'videos']]) {
+  for (const [id, k] of PANEL_BUTTONS) {
     $(id).setAttribute('aria-pressed', state.panel === k ? 'true' : 'false');
   }
 }
+
+const PANEL_BUTTONS = [['#btn-search', 'search'], ['#btn-study', 'study'], ['#btn-library', 'library'], ['#btn-videos', 'videos']];
+
+const refreshLibrarySoon = debounce(() => {
+  if (state.panel === 'library') showPanel('library');
+}, 250);
+
+const refreshPanelSoon = debounce(() => refreshPanel(), 250);
 
 function hidePanel() {
   state.panel = null;
   if (state.settings.panel !== null) setSetting('panel', null);
   $('#panel').hidden = true;
-  for (const id of ['#btn-search', '#btn-study', '#btn-videos']) $(id).setAttribute('aria-pressed', 'false');
+  for (const [id] of PANEL_BUTTONS) $(id).setAttribute('aria-pressed', 'false');
 }
 
 function togglePanel(kind, options) {
@@ -514,6 +579,7 @@ function refreshPanel() {
 const ctx = {
   module: () => moduleInfo(),
   modules: () => state.modules,
+  allModules: () => state.all,
   settings: () => state.settings,
   setSetting,
   user: () => state.user,
@@ -536,12 +602,33 @@ const ctx = {
     return formatReference(module?.language || 'en', place.book, place.chapter, place.verse, place.chapter, verseEnd ?? place.verse, own?.abbrev);
   },
   chapterLabel: (module, book, chapter) => `${bookName(moduleInfo(module), book)} ${chapter}`,
-  chapterVideos: () => state.data?.videos || [],
+  osisLabel: (start, end = start) => {
+    const a = splitOsis(start);
+    const b = splitOsis(end) || a;
+    if (!a) return start;
+    const module = moduleInfo();
+    const own = module?.books.find((x) => x.osis === a.book);
+    return formatReference(module?.language || 'en', a.book, a.chapter, a.verse, b.chapter, b.verse, own?.abbrev);
+  },
+  chapterVideos: () => chapterVideoIds(),
+  focus: () => focusRef(),
+  selectionRange: () => {
+    const verses = selectedVerses();
+    return verses.length ? { start: verses[0].canon, end: verses[verses.length - 1].canonEnd, label: selectionLabel(verses) } : null;
+  },
+  openRange: (start, end) => openRange(start, end),
+  openLibrary: (tab, options) => {
+    state.libraryTab = tab;
+    closeOverlay();
+    showPanel('library', options);
+  },
+  print: (what) => print(what),
   version: () => state.version,
   platform: () => state.platform,
   modulesChanged: async (abbreviation) => {
     const info = await api.startup();
-    state.modules = info.modules;
+    setModules(info.modules);
+    if (state.panel === 'library') refreshLibrarySoon();
     fillModulePicker();
     const target = abbreviation && moduleInfo(abbreviation) ? abbreviation : moduleInfo(state.module) ? state.module : state.modules[0].abbreviation;
     const found = topVerse();
@@ -552,6 +639,80 @@ const ctx = {
     }
   },
 };
+
+/** The verse the library speaks about: the first one selected, or the first one in view. */
+function focusRef() {
+  const selected = selectedVerses();
+  if (selected.length) return selected[0].canon;
+  return topVerse()?.canon || state.data?.verses[0]?.canon || null;
+}
+
+/** Catalogue videos and the reader's own about this chapter. */
+function chapterVideoIds() {
+  const ids = new Set(state.data?.videos || []);
+  for (const a of anchorsByVerse(state.user.video_anchors, state.data?.verses || []).values()) {
+    for (const id of a) ids.add(id);
+  }
+  return [...ids];
+}
+
+async function openRange(start, end) {
+  const [a, b] = await api.resolve(state.module, [start, end]);
+  if (!a) {
+    toast(`${state.module} does not contain this passage.`);
+    return;
+  }
+  const verseEnd = b && b.book === a.book && b.chapter === a.chapter ? b.verse : null;
+  await openPlace(state.module, a.book, a.chapter, a.verse, verseEnd, { select: true });
+}
+
+/** The library sees every module, Bibles included. */
+const libraryCtx = {
+  ...ctx,
+  // On a phone the panel covers the text, so opening a passage closes it.
+  openRange: async (start, end) => {
+    await openRange(start, end);
+    if (window.matchMedia?.('(max-width: 640px)').matches) hidePanel();
+  },
+  modules: () => state.all,
+  bookName: (osis) => bookName(moduleInfo(), osis),
+  hasSelection: () => state.selection.length > 0,
+  refreshLibrary: () => refreshLibrarySoon(),
+  openEntry: (module, key) => {
+    state.libraryTab = 'dictionary';
+    showPanel('library', { module, key });
+  },
+};
+
+async function describeNotes() {
+  const sorted = [...state.user.notes].sort((a, b) => compareOsis(a.start, b.start));
+  if (!sorted.length) return [];
+  const module = moduleInfo();
+  const [places, texts] = await Promise.all([api.resolve(module.abbreviation, sorted.map((n) => n.start)), api.verseTexts(module.abbreviation, sorted.map((n) => n.start))]);
+  return sorted.map((note, i) => ({ note, text: texts[i], label: places[i] ? ctx.placeLabel(places[i]) : note.start }));
+}
+
+function print(initial = null) {
+  const info = moduleInfo();
+  if (!info || !state.data) return;
+  const own = info.books.find((b) => b.osis === state.book);
+  const parallelModules = state.parallel ? state.parallel.modules.map((m) => moduleInfo(m)) : null;
+  openPrint({
+    initial,
+    title: `${bookName(info, state.book)} ${state.chapter}`,
+    module: info,
+    data: state.data,
+    bookName: bookName(info, state.book),
+    settings: state.settings,
+    user: state.user,
+    selection: new Set(state.selection),
+    parallel: state.parallel,
+    modules: parallelModules,
+    bookNames: parallelModules ? parallelModules.map((m) => bookName(m, state.book)) : null,
+    label: (first, last) => formatReference(info.language, state.book, state.chapter, first, state.chapter, last, own?.abbrev),
+    describeNotes,
+  }, state.settings.print, (value) => setSetting('print', value));
+}
 
 // Commands
 
@@ -604,6 +765,7 @@ function bind() {
   $('#btn-goto').addEventListener('click', palette);
   $('#btn-search').addEventListener('click', () => togglePanel('search'));
   $('#btn-study').addEventListener('click', () => togglePanel('study'));
+  $('#btn-library').addEventListener('click', () => togglePanel('library'));
   $('#btn-videos').addEventListener('click', () => togglePanel('videos'));
   $('#btn-settings').addEventListener('click', () => openPreferences(ctx));
 
@@ -636,7 +798,13 @@ function bind() {
       return;
     }
     if (event.target.closest('#chapter-videos')) {
-      showPanel('videos', { chapterOnly: true });
+      showPanel('videos', { scope: 'chapter' });
+      return;
+    }
+    const videoMarker = event.target.closest('.marker.video');
+    if (videoMarker) {
+      const verse = state.data.verses.find((v) => v.verse === Number(videoMarker.dataset.verse));
+      showPanel('videos', { scope: 'verse', at: verse?.canon });
       return;
     }
     if (event.target.closest('a')) return;
@@ -651,10 +819,17 @@ function bind() {
   });
 
   document.addEventListener('copy', (event) => {
+    if (pendingCopy) {
+      event.preventDefault();
+      event.clipboardData.setData('text/plain', pendingCopy.text);
+      event.clipboardData.setData('text/html', pendingCopy.html);
+      return;
+    }
     const picked = textSelection();
     if (!picked) return;
     event.preventDefault();
     event.clipboardData.setData('text/plain', copyPayload(picked.verses, picked.excerpt));
+    event.clipboardData.setData('text/html', copyHtml(copyArgs(picked.verses, picked.excerpt)));
   });
 
   document.addEventListener('keydown', (event) => {
@@ -667,10 +842,15 @@ function bind() {
     }
     if (ctrl && key === 'k') {
       event.preventDefault();
-      if (!isOpen()) palette();
+      if (!isOpen() && !printPreviewOpen()) palette();
       return;
     }
-    if (isOpen()) return;
+    if (ctrl && key === 'p') {
+      event.preventDefault();
+      if (!isOpen() && !printPreviewOpen()) print();
+      return;
+    }
+    if (isOpen() || printPreviewOpen()) return;
     if (ctrl && key === 'f') {
       event.preventDefault();
       showPanel('search');
@@ -717,8 +897,9 @@ export async function boot() {
   state.platform = info.platform || '';
   setPlatform(state.platform);
   document.documentElement.dataset.platform = state.platform;
-  state.modules = info.modules;
+  setModules(info.modules);
   state.settings = normalise(info.settings);
+  state.libraryTab = state.settings.library.tab;
   state.user = normaliseUser(info.user);
   applyAppearance(state.settings);
   $('#btn-videos').hidden = state.settings.videos !== true;
@@ -750,7 +931,7 @@ export async function boot() {
   }
   if (state.settings.videos === null) askAboutVideos(ctx);
   const panel = state.settings.panel;
-  if (panel === 'study' || panel === 'search' || (panel === 'videos' && state.settings.videos)) showPanel(panel);
+  if (panel === 'study' || panel === 'search' || panel === 'library' || (panel === 'videos' && state.settings.videos)) showPanel(panel);
 }
 
 if (typeof window !== 'undefined' && window.__TAURI__ && !window.__GRT_TEST__) {

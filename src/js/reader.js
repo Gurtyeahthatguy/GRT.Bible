@@ -26,7 +26,7 @@ export function annotationsFor(verses, user) {
   return out;
 }
 
-function verseNode(v, settings, marks, noteNumbers) {
+function verseNode(v, settings, marks, noteNumbers, anchors) {
   const mark = marks.get(v.verse) || { color: null, notes: [], bookmark: null };
   const cls = ['verse'];
   if (mark.color) cls.push(`hl-${mark.color}`);
@@ -45,6 +45,11 @@ function verseNode(v, settings, marks, noteNumbers) {
   for (const note of mark.notes) {
     node.append(h('button', { class: 'marker note', title: 'Your note', 'aria-label': 'Open your note', dataset: { note: note.id } }));
   }
+  const videos = anchors.get(v.verse);
+  if (videos?.length) {
+    const label = videos.length === 1 ? 'A video you linked here' : `${videos.length} videos you linked here`;
+    node.append(h('button', { class: 'marker video', title: label, 'aria-label': label, dataset: { verse: v.verse } }));
+  }
   return node;
 }
 
@@ -56,7 +61,7 @@ function titleNode(t) {
 }
 
 /** The chapter article, with the reader's annotations marked. */
-export function renderChapter({ data, module, bookName, settings, user, videos = [] }) {
+export function renderChapter({ data, module, bookName, settings, user, videos = [], anchors = new Map() }) {
   const lang = module.language;
   const article = h('article', { class: `chapter layout-${settings.layout}`, lang, dir: module.direction || 'ltr' });
   const header = h('header', { class: 'chapter-head' }, h('h1', {}, `${bookName} ${data.chapter}`));
@@ -90,7 +95,7 @@ export function renderChapter({ data, module, bookName, settings, user, videos =
     const before = titles.get(v.verse) || [];
     if (before.length) paragraph = null;
     for (const t of before) article.append(titleNode(t));
-    const node = verseNode(v, settings, marks, noteNumbers);
+    const node = verseNode(v, settings, marks, noteNumbers, anchors);
     if (settings.layout === 'verses') {
       article.append(h('p', { class: 'line' }, node));
       continue;

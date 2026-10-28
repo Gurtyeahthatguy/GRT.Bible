@@ -1449,9 +1449,10 @@ dependencies = [
 
 [[package]]
 name = "grt-bible"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "grtb",
+ "gtk",
  "serde",
  "serde_json",
  "tauri",
@@ -1460,12 +1461,13 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tempfile",
+ "webkit2gtk",
  "zip",
 ]
 
 [[package]]
 name = "grt-container"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "serde",
@@ -1474,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "grtb"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "bzip2-rs",
  "flate2",
@@ -1491,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "grtb-convert"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "grtb",
  "serde",

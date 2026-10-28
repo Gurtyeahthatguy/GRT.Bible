@@ -1,14 +1,19 @@
 //! The reader's file and the interface preferences on disk.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use grtb::userdata::UserData;
 
+use crate::library::Origin;
+
 pub struct Store {
     pub user_file: PathBuf,
     pub settings_file: PathBuf,
+    /// Which file each installed module came from.
+    pub origins_file: PathBuf,
 }
 
 fn temp_beside(target: &Path) -> PathBuf {
@@ -57,6 +62,16 @@ impl Store {
         atomic_write(&self.user_file, &data.to_archive()?)
     }
 
+    pub fn load_origins(&self) -> BTreeMap<String, Origin> {
+        fs::read(&self.origins_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    pub fn save_origins(&self, origins: &BTreeMap<String, Origin>) -> Result<(), String> {
+        let mut text = serde_json::to_string_pretty(origins).map_err(|e| e.to_string())?;
+        text.push('\n');
+        atomic_write(&self.origins_file, text.as_bytes())
+    }
+
     pub fn load_settings(&self) -> serde_json::Value {
         fs::read(&self.settings_file)
             .ok()
@@ -80,7 +95,7 @@ mod tests {
     use super::*;
 
     fn store(dir: &Path) -> Store {
-        Store { user_file: dir.join("user.grt"), settings_file: dir.join("settings.json") }
+        Store { user_file: dir.join("user.grt"), settings_file: dir.join("settings.json"), origins_file: dir.join("origins.json") }
     }
 
     #[test]

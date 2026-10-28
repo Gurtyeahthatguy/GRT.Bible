@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::integrity;
-use crate::module::{missing_books, BookContent, Manifest, ModuleContent, SCHEMA_VERSION};
+use crate::module::{missing_books, BookContent, EntryContent, LinkGroup, Manifest, ModuleContent, SCHEMA_VERSION};
 use crate::versification::scheme;
 
 /// What a person says about a module; the rest is worked out from the text.
@@ -29,6 +29,7 @@ pub fn assemble(description: &Description, books: BTreeMap<u8, BookContent>, gen
         description.direction.as_str()
     };
     let manifest = Manifest {
+        kind: "bible".into(),
         id: description.id.clone(),
         abbreviation: description.abbreviation.clone(),
         title: description.title.clone(),
@@ -45,8 +46,49 @@ pub fn assemble(description: &Description, books: BTreeMap<u8, BookContent>, gen
         generated_at: generated_at.to_string(),
         source_hash: source_hash.to_string(),
         missing_books: missing_books(&books),
+        features: Vec::new(),
     };
-    ModuleContent { manifest, books, integrity: Some(report) }
+    ModuleContent { manifest, books, integrity: Some(report), entries: Vec::new(), links: Vec::new() }
+}
+
+/// A commentary, dictionary, set of cross-references or book, ready to write.
+pub fn assemble_resource(
+    description: &Description,
+    kind: &str,
+    entries: Vec<EntryContent>,
+    links: Vec<LinkGroup>,
+    features: Vec<String>,
+    generated_at: &str,
+    source_hash: &str,
+) -> ModuleContent {
+    let mut books: Vec<u8> = entries
+        .iter()
+        .flat_map(|e| e.spans.iter().map(|(a, _)| a.book))
+        .chain(links.iter().map(|l| l.first.book))
+        .collect();
+    books.sort_unstable();
+    books.dedup();
+    let manifest = Manifest {
+        kind: kind.to_string(),
+        id: description.id.clone(),
+        abbreviation: description.abbreviation.clone(),
+        title: description.title.clone(),
+        language: description.language.clone(),
+        direction: if description.direction.is_empty() { "ltr".into() } else { description.direction.clone() },
+        year: description.year,
+        canon: description.canon.clone(),
+        versification: description.versification.clone(),
+        license: description.license.clone(),
+        source: description.source.clone(),
+        books_present: books.len() as u32,
+        source_notes: false,
+        schema_version: SCHEMA_VERSION,
+        generated_at: generated_at.to_string(),
+        source_hash: source_hash.to_string(),
+        missing_books: Vec::new(),
+        features,
+    };
+    ModuleContent { manifest, books: BTreeMap::new(), integrity: None, entries, links }
 }
 
 /// The civil date of a Unix time, as `YYYY-MM-DD`.

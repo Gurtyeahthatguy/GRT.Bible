@@ -7,8 +7,11 @@ A Bible reader for the 73-book Catholic canon that runs on your own computer.
 - **Nothing social.** No account, no sharing, no reading plans, no streaks.
 - **Public domain texts only.** Other translations can be imported from files
   you already have.
-- **Your data is one file.** Position, history, notes, highlights, bookmarks and
-  saved videos live in a single `.grt` file you can copy anywhere.
+- **Study material from files.** Commentaries, cross-references, dictionaries
+  and books install from a file, and appear beside the verse you are reading.
+- **Your data is one file.** Position, history, notes, highlights, bookmarks,
+  saved videos and video lists live in a single `.grt` file you can copy
+  anywhere.
 
 Ready-made programs for Linux, Windows and Android are attached to each release.
 Building and installing: [INSTALL.md](INSTALL.md).
@@ -50,6 +53,17 @@ marks every verse; a short list of slips in it is corrected in
 
 Books a translation lacks are listed, greyed out, not hidden.
 
+## Study packs
+
+Attached to each release as separate files, installed from the library:
+
+| File | Kind | Source |
+|---|---|---|
+| `TSK.grtb` | Cross-references: the Treasury of Scripture Knowledge, 66,726 groups | CrossWire SWORD module `TSK` 1.4, public domain |
+
+[MODULES.md](MODULES.md) explains, step by step, how to install these and any
+SWORD or USFM module on Linux, Windows and Android.
+
 ## Verse numbers
 
 Translations number verses differently: the Psalms of the Vulgate run one
@@ -79,6 +93,7 @@ Societies under the MIT licence, corrected where a text departs from them.
 | `Ctrl+K` | go to a passage |
 | `Ctrl+F` | search |
 | `Ctrl+C` | copy the selection with its reference |
+| `Ctrl+P` | print |
 | `Ctrl +` `Ctrl -` | text size |
 | `Esc` | close, or clear the selection |
 
@@ -88,10 +103,12 @@ separator. Numbers are read in the translation you are reading. `Gn` is Genesis
 in Latin and Jonah in Italian, so it asks.
 
 **Click a verse** to select it, click its neighbours to extend, Shift-click for
-a range. The bar that appears copies, highlights, adds a note or a bookmark.
-Copied text ends with the reference, `Gv 3,16-17 (MAR)`; where the reference
-goes, and whether the abbreviation and verse numbers come with it, is in
-Settings.
+a range. The bar that appears copies, highlights, adds a note or a bookmark,
+shows the references and commentary on it, or prints it. Copied text ends with
+the reference, `Gv 3,16-17 (MAR)`; where the reference goes, and whether the
+abbreviation and verse numbers come with it, is in Settings. The copy also
+carries the quotation as HTML, which GRT Paper pastes as a quote with its
+reference.
 
 **Compare** puts up to four translations side by side, aligned verse by verse.
 
@@ -100,7 +117,20 @@ Hebrew points. Quotes keep a phrase together.
 
 **Study** holds the verse of the day, your notes, highlights, bookmarks and
 history. The file is `user.grt` in the program's data folder; Settings exports
-and imports it.
+and imports it. Notes also export as one Markdown file, with front matter, that
+GRT Notes and other Markdown notebooks open.
+
+**Library** shows what the installed material says about the selected verse,
+or the first one in view: its cross-references, each opening a preview of the
+passage in your translation, and the chosen commentary, which steps from one
+comment to the next. Dictionaries are looked up by headword, books read by
+section, and the **Installed** tab lists every module with its kind, language,
+licence, source and the file it came from.
+
+**Print** lays the chapter, the selected verses, the comparison or all your
+notes on pages of a fixed size, A4, A5 or Letter, with a header of our own and
+page numbers, and shows them before anything is printed. On Linux the pages go
+to GTK's print dialog with the paper already set; on Windows to the system's.
 
 ## On a phone
 
@@ -117,15 +147,19 @@ backup is off, and your `.grt` file is exported from Settings as anywhere else.
 Two things work differently from the desktop. A SWORD or USFM folder cannot be
 chosen, only a file, because Android hands over single documents. And the file
 picker offers every file, since it filters by media type and `.grtb` and `.grt`
-have none.
+have none. Printing goes to Android's print service, which also saves a PDF.
 
-## Importing a translation
+## Installing modules
 
-Settings, then **Import a translation**, reads a SWORD module (the ZIP CrossWire
-distributes, or its folder) or USFM files (a ZIP, a folder or one file). The
-program suggests the verse numbering that fits the text best. Nothing is
-downloaded: you choose a file already on your computer, and you are responsible
-for the right to use it.
+Library, then **Installed**: **Install a .grtb file…** takes a module as it is;
+**Convert a SWORD or USFM module…** reads a SWORD module of any of the five
+kinds (the ZIP CrossWire distributes, or its folder) or USFM files (a ZIP, a
+folder or one file). The program suggests the verse numbering that fits, and
+offers a commentary made mostly of references as cross-references. Strong's
+numbers and morphology in an imported Bible are kept in the module for the
+study of the original languages. Nothing is downloaded: you choose a file
+already on your computer, and you are responsible for the right to use it.
+Every step, on every system, is in [MODULES.md](MODULES.md).
 
 ## The video section
 
@@ -146,6 +180,10 @@ questions; **Theology** everything else. The sorting reads titles, so a video
 can land in the wrong place: change its `category` in `catalog/catalog.json`
 and the correction survives the next refresh. A video whose title names a
 passage, such as "James 2", also appears on that chapter.
+
+Any video can be linked to the verses you have selected, and then shows as a
+small mark beside them; videos can also be kept in lists of your own. Both are
+saved in your `.grt` file.
 
 GRT Bible is not affiliated with any of these channels. The list is one
 reader's selection, made from what the channels publish in the open; none of
@@ -171,7 +209,7 @@ tool for whoever keeps the catalog and is not part of the program; so is
 
 | What | Linux | Windows | Android |
 |---|---|---|---|
-| Your file, `user.grt`, and imported translations | `~/.local/share/org.grt.bible/` | `%APPDATA%\org.grt.bible\` | inside the application |
+| Your file, `user.grt`, and installed modules | `~/.local/share/org.grt.bible/` | `%APPDATA%\org.grt.bible\` | inside the application |
 | Settings | `~/.config/org.grt.bible/settings.json` | `%APPDATA%\org.grt.bible\settings.json` | inside the application |
 | The translations that come with it | inside the package | inside the package | unpacked out of the package at the first start |
 
@@ -204,10 +242,12 @@ npm test
 ./scripts/preview.sh
 ```
 
-111 tests cover the reference parser, the versification tables, the module and
-user file formats, and the interface running against a stubbed backend. The
-preview serves the real interface in a browser, with a few chapters of every
-module, so it can be looked at without building.
+150 tests cover the reference parser, the versification tables, the module and
+user file formats, the SWORD readers for every kind of module, markup that
+tries to smuggle in scripts, and the interface running against a stubbed
+backend. The preview serves the real interface in a browser, with a few
+chapters of every module and of the study packs, so it can be looked at
+without building.
 
 ## Limits
 
@@ -220,6 +260,8 @@ module, so it can be looked at without building.
   hidden.
 - A note, a highlight and a bookmark belong to a verse, not to a phrase inside
   it.
+- Search covers the translations, not commentaries, dictionaries or books.
+- Strong's numbers kept from an imported SWORD Bible are not shown yet.
 - The video catalog is sorted by reading titles, so a video sits in the wrong
   category until someone corrects it.
 
@@ -228,4 +270,4 @@ module, so it can be looked at without building.
 MIT. See [LICENSE](LICENSE). The texts are in the public domain. The
 versification data derived from Paratext is MIT, United Bible Societies; the
 chapter and verse counts the SWORD importer needs were read from CrossWire's
-canon tables.
+canon tables. The Treasury of Scripture Knowledge is in the public domain.

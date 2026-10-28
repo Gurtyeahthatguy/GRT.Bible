@@ -1,19 +1,11 @@
-/** The settings dialog: reading, copying, videos, the reader's file and the installed translations. */
+/** The settings dialog: reading, copying, videos and the reader's file. */
 
-import { api, ask, onAndroid, pickFile, pickFolder, pickSave } from './api.js';
-import { clear, h } from './dom.js';
+import { api, ask, onAndroid, pickFile, pickSave } from './api.js';
+import { h } from './dom.js';
+import { openGuide } from './guide.js';
+import { KIND_LABELS } from './library.js';
 import { closeOverlay, openOverlay, toast } from './overlay.js';
 import { THEMES } from './settings.js';
-
-const SCHEME_LABELS = {
-  hebrew: 'Hebrew numbering',
-  vulgate: 'Vulgate numbering',
-  english: 'English numbering',
-  lxx: 'Septuagint numbering',
-  martini: 'Martini numbering',
-  douay: 'Douay-Rheims numbering',
-  webc: 'World English Bible numbering',
-};
 
 function field(label, control, note = null) {
   return h('label', { class: 'field' }, h('span', { class: 'field-label' }, label), control, note ? h('span', { class: 'fine' }, note) : null);
@@ -34,78 +26,6 @@ function choice(name, options, value, onchange) {
       radio.addEventListener('change', () => radio.checked && onchange(v));
       return h('label', { class: 'check' }, radio, h('span', {}, label));
     }));
-}
-
-function importDialog(ctx) {
-  const body = h('div', { class: 'import' });
-  const status = h('p', { class: 'fine', 'aria-live': 'polite' });
-
-  const chooseStep = () => {
-    const android = onAndroid();
-    clear(body,
-      h('h2', {}, 'Import a translation'),
-      h('p', {}, android
-        ? 'Choose a SWORD module as a ZIP, or USFM files as a ZIP or a single file. Only import texts you have the right to use.'
-        : 'Choose a SWORD module (a ZIP or its folder) or USFM files (a ZIP, a folder or a single file). Only import texts you have the right to use.'),
-      h('div', { class: 'row' },
-        h('button', { onclick: async () => inspect(await pickFile('Choose a module file', [{ name: 'SWORD or USFM', extensions: ['zip', 'usfm', 'sfm'] }])) }, 'Choose a file…'),
-        android ? null : h('button', { onclick: async () => inspect(await pickFolder('Choose a module folder')) }, 'Choose a folder…')),
-      status);
-  };
-
-  const inspect = async (path) => {
-    if (!path) return;
-    status.textContent = 'Reading the file…';
-    try {
-      const found = await api.inspectImport(path);
-      formStep(path, found);
-    } catch (error) {
-      status.textContent = String(error);
-    }
-  };
-
-  const formStep = (path, found) => {
-    const abbreviation = h('input', { type: 'text', value: found.abbreviation, maxlength: 10, required: true });
-    const title = h('input', { type: 'text', value: found.title, required: true });
-    const language = h('input', { type: 'text', value: found.language, placeholder: 'it, en, la…', maxlength: 8, required: true });
-    const best = found.ranking[0]?.[0];
-    const scheme = h('select', {}, found.ranking.map(([name, score]) =>
-      h('option', { value: name }, `${SCHEME_LABELS[name] || name}${name === best ? ' (best fit)' : ''}${score ? `, ${score} mismatches` : ''}`)));
-    scheme.value = found.versification;
-    const go = h('button', { class: 'primary' }, 'Import');
-    const result = h('p', { class: 'fine', 'aria-live': 'polite' });
-    go.addEventListener('click', async () => {
-      go.disabled = true;
-      result.textContent = 'Converting… this can take a minute.';
-      try {
-        const info = await api.importModule(path, {
-          abbreviation: abbreviation.value.trim(),
-          title: title.value.trim(),
-          language: language.value.trim(),
-          versification: scheme.value,
-        });
-        closeOverlay();
-        toast(`${info.abbreviation} installed. ${info.summary}`, 6000);
-        ctx.modulesChanged(info.abbreviation);
-      } catch (error) {
-        result.textContent = String(error);
-        go.disabled = false;
-      }
-    });
-    clear(body,
-      h('h2', {}, 'Import a translation'),
-      h('p', {}, `${found.kind === 'sword' ? 'SWORD module' : 'USFM text'} with ${found.books} books of the canon.`),
-      found.warnings.length ? h('details', {}, h('summary', {}, `${found.warnings.length} notes from the converter`), h('ul', {}, found.warnings.map((w) => h('li', {}, w)))) : null,
-      field('Abbreviation', abbreviation, 'Shown in the translation list and in copied references.'),
-      field('Title', title),
-      field('Language code', language),
-      field('Verse numbering', scheme, 'Notes and highlights stay on the right verse across translations only if this is right.'),
-      h('div', { class: 'row' }, h('button', { onclick: chooseStep }, 'Back'), go),
-      result);
-  };
-
-  chooseStep();
-  openOverlay(body, { label: 'Import a translation' });
 }
 
 export function openPreferences(ctx) {
@@ -130,28 +50,10 @@ export function openPreferences(ctx) {
     set('lineWidth', Number(width.value));
   });
 
-  const modules = h('div', { class: 'module-list' });
-  const drawModules = () => {
-    clear(modules, ctx.modules().map((m) => h('article', { class: 'card' },
-      h('header', {}, h('strong', {}, `${m.abbreviation} · ${m.title}`),
-        m.bundled ? null : h('button', {
-          class: 'quiet danger',
-          onclick: async () => {
-            if (!(await ask(`Remove ${m.abbreviation} from this computer? Your notes are not affected.`))) return;
-            try {
-              await api.removeModule(m.abbreviation);
-              ctx.modulesChanged(null);
-              drawModules();
-            } catch (error) {
-              toast(String(error), 5000);
-            }
-          },
-        }, 'Remove')),
-      h('p', { class: 'fine' }, [m.language, m.year, SCHEME_LABELS[m.versification] || m.versification, m.license].filter(Boolean).join(' · ')),
-      h('p', { class: 'fine' }, m.summary),
-      m.source ? h('p', { class: 'fine' }, `Source: ${m.source}`) : null)));
-  };
-  drawModules();
+  const counts = Object.entries(KIND_LABELS)
+    .map(([kind, [, plural]]) => [plural, ctx.allModules().filter((m) => m.kind === kind).length])
+    .filter(([, n]) => n > 0)
+    .map(([plural, n]) => `${n} ${plural.toLowerCase()}`);
 
   const body = h('div', { class: 'preferences' },
     h('h2', {}, 'Settings'),
@@ -177,7 +79,7 @@ export function openPreferences(ctx) {
       h('p', { class: 'fine' }, `Videos are chosen by the author and open in your ${onAndroid() ? 'browser or video app' : 'web browser'}, after checking the site is on the allowed list. Nothing about your reading is sent anywhere, and GRT Bible is not affiliated with the channels it lists.`)),
     h('section', {},
       h('h3', {}, 'Your data'),
-      h('p', { class: 'fine' }, 'Reading position, history, notes, highlights, bookmarks and saved videos live in one .grt file.'),
+      h('p', { class: 'fine' }, 'Reading position, history, notes, highlights, bookmarks, saved videos and your video lists live in one .grt file.'),
       h('div', { class: 'row' },
         h('button', {
           onclick: async () => {
@@ -206,9 +108,11 @@ export function openPreferences(ctx) {
           },
         }, 'Import…'))),
     h('section', {},
-      h('h3', {}, 'Translations'),
-      modules,
-      h('button', { onclick: () => importDialog(ctx) }, 'Import a translation…')),
+      h('h3', {}, 'Modules'),
+      h('p', { class: 'fine' }, `Installed: ${counts.join(', ')}. Translations, commentaries, cross-references, dictionaries and books are listed, installed and removed in the library.`),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => ctx.openLibrary('installed') }, 'Open the library'),
+        h('button', { class: 'quiet', onclick: () => openGuide() }, 'How to install modules'))),
     h('section', {},
       h('h3', {}, 'About'),
       h('p', { class: 'fine' }, onAndroid()

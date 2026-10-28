@@ -1,10 +1,12 @@
 //! The installed modules and what can be read from them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use grtb::canon::{book, book_by_osis};
 use grtb::module::{BookInfo, Module, NoteRow, TitleRow};
+use serde::Deserialize;
 use grtb::refs::Ref;
 use grtb::versification::{scheme, Scheme};
 use serde::Serialize;
@@ -12,9 +14,17 @@ use serde::Serialize;
 /// Bundled modules in the order they are offered.
 const PREFERRED: [&str; 8] = ["VUL", "MAR", "WEBC", "DRA", "RIV", "LXX", "N1904", "WLC"];
 
+/// The file a module was installed from, and when.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    pub file: String,
+    pub installed: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModuleInfo {
+    pub kind: String,
     pub abbreviation: String,
     pub id: String,
     pub title: String,
@@ -30,6 +40,10 @@ pub struct ModuleInfo {
     pub books: Vec<BookInfo>,
     pub missing_books: Vec<String>,
     pub summary: String,
+    pub features: Vec<String>,
+    pub entries: u32,
+    pub file_name: String,
+    pub origin: Option<Origin>,
 }
 
 pub struct Entry {
@@ -58,11 +72,22 @@ pub struct Library {
     entries: Vec<Arc<Entry>>,
 }
 
-fn open_entry(path: &Path, bundled: bool) -> Result<Entry, String> {
+fn open_entry(path: &Path, bundled: bool, origins: &BTreeMap<String, Origin>) -> Result<Entry, String> {
     let module = Module::open(path)?;
-    let books = module.books()?;
+    let bible = module.kind() == "bible";
+    let books = if bible { module.books()? } else { Vec::new() };
+    let entries = module.entry_count()?;
     let m = &module.manifest;
+    let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let summary = if bible {
+        module.integrity.as_ref().map(grtb::integrity::summary).unwrap_or_default()
+    } else if m.kind == "crossrefs" {
+        format!("{entries} groups of references")
+    } else {
+        format!("{entries} entries")
+    };
     let info = ModuleInfo {
+        kind: m.kind.clone(),
         abbreviation: m.abbreviation.clone(),
         id: m.id.clone(),
         title: m.title.clone(),
@@ -77,14 +102,18 @@ fn open_entry(path: &Path, bundled: bool) -> Result<Entry, String> {
         has_notes: m.source_notes,
         books,
         missing_books: m.missing_books.clone(),
-        summary: module.integrity.as_ref().map(grtb::integrity::summary).unwrap_or_default(),
+        summary,
+        features: m.features.clone(),
+        entries,
+        origin: origins.get(&file_name).cloned(),
+        file_name,
     };
     Ok(Entry { info, path: path.to_path_buf(), module: Mutex::new(module) })
 }
 
 impl Library {
     /// Opens every module in the given folders; problems are returned, not fatal.
-    pub fn load(folders: &[(PathBuf, bool)]) -> (Library, Vec<String>) {
+    pub fn load(folders: &[(PathBuf, bool)], origins: &BTreeMap<String, Origin>) -> (Library, Vec<String>) {
         let mut library = Library::default();
         let mut problems = Vec::new();
         for (folder, bundled) in folders {
@@ -96,7 +125,7 @@ impl Library {
                 .collect();
             paths.sort();
             for path in paths {
-                match open_entry(&path, *bundled) {
+                match open_entry(&path, *bundled, origins) {
                     Ok(entry) if library.entries.iter().any(|e| e.info.abbreviation == entry.info.abbreviation) => {
                         problems.push(format!("{} skipped: another module is already called {}", path.display(), entry.info.abbreviation));
                     }
@@ -111,8 +140,9 @@ impl Library {
 
     fn sort(&mut self) {
         let rank = |e: &Arc<Entry>| PREFERRED.iter().position(|p| *p == e.info.abbreviation).unwrap_or(PREFERRED.len());
+        let kind = |e: &Arc<Entry>| grtb::module::KINDS.iter().position(|k| *k == e.info.kind).unwrap_or(0);
         self.entries.sort_by(|a, b| {
-            (!a.info.bundled, rank(a), a.info.abbreviation.clone()).cmp(&(!b.info.bundled, rank(b), b.info.abbreviation.clone()))
+            (kind(a), !a.info.bundled, rank(a), a.info.abbreviation.clone()).cmp(&(kind(b), !b.info.bundled, rank(b), b.info.abbreviation.clone()))
         });
     }
 
@@ -128,12 +158,30 @@ impl Library {
             .ok_or_else(|| format!("no module called {abbreviation}"))
     }
 
+    /// A module that must be a Bible, for reading, comparing and searching.
+    pub fn bible(&self, abbreviation: &str) -> Result<Arc<Entry>, String> {
+        let entry = self.get(abbreviation)?;
+        if entry.info.kind != "bible" {
+            return Err(format!("{abbreviation} is not a Bible"));
+        }
+        Ok(entry)
+    }
+
+    /// A module that must be of the given kind.
+    pub fn of_kind(&self, abbreviation: &str, kind: &str) -> Result<Arc<Entry>, String> {
+        let entry = self.get(abbreviation)?;
+        if entry.info.kind != kind {
+            return Err(format!("{abbreviation} is not a {kind} module"));
+        }
+        Ok(entry)
+    }
+
     pub fn contains(&self, abbreviation: &str) -> bool {
         self.entries.iter().any(|e| e.info.abbreviation.eq_ignore_ascii_case(abbreviation))
     }
 
-    pub fn add(&mut self, path: &Path) -> Result<ModuleInfo, String> {
-        let entry = open_entry(path, false)?;
+    pub fn add(&mut self, path: &Path, origins: &BTreeMap<String, Origin>) -> Result<ModuleInfo, String> {
+        let entry = open_entry(path, false, origins)?;
         let info = entry.info.clone();
         self.entries.push(Arc::new(entry));
         self.sort();
@@ -149,8 +197,12 @@ impl Library {
         Ok(entry.path.clone())
     }
 
-    pub fn all(&self) -> Vec<Arc<Entry>> {
-        self.entries.clone()
+    pub fn bibles(&self) -> Vec<Arc<Entry>> {
+        self.entries.iter().filter(|e| e.info.kind == "bible").cloned().collect()
+    }
+
+    pub fn kind(&self, kind: &str) -> Vec<Arc<Entry>> {
+        self.entries.iter().filter(|e| e.info.kind == kind).cloned().collect()
     }
 }
 
@@ -247,6 +299,41 @@ pub fn resolve(entry: &Entry, canon: Ref) -> Option<Place> {
         return Some(Place { book: osis_of(r.book), chapter: r.chapter, verse: r.verse });
     }
     Some(Place { book: osis_of(canon.book), chapter: canon.chapter.min(info.chapters), verse: 1 })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PassageVerse {
+    pub book: &'static str,
+    pub chapter: u16,
+    pub verse: u16,
+    pub text: String,
+    pub canon: String,
+}
+
+/// The verses of a module that fall inside an internal range, at most `limit` of them.
+pub fn passage(entry: &Entry, first: Ref, last: Ref, limit: usize) -> Result<Vec<PassageVerse>, String> {
+    let (Some(from), Some(to)) = (resolve(entry, first), resolve(entry, last)) else { return Ok(Vec::new()) };
+    let (start_book, end_book) = (book_index(from.book)?, book_index(to.book)?);
+    let s = entry.scheme();
+    let mut out = Vec::new();
+    for b in entry.info.books.iter().filter(|b| b.index >= start_book && b.index <= end_book) {
+        let first_chapter = if b.index == start_book { from.chapter } else { 1 };
+        let last_chapter = if b.index == end_book { to.chapter } else { b.chapters };
+        for c in first_chapter..=last_chapter {
+            let raw = entry.with(|m| m.chapter(b.index, c))?;
+            for v in raw.verses {
+                let (a, z) = s.to_canon(Ref::new(b.index, c, v.verse));
+                if z < first || a > last {
+                    continue;
+                }
+                out.push(PassageVerse { book: osis_of(b.index), chapter: c, verse: v.verse, text: v.text, canon: a.osis() });
+                if out.len() >= limit {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -379,7 +466,7 @@ mod tests {
     }
 
     fn library() -> Library {
-        let (library, problems) = Library::load(&[(modules_dir(), true)]);
+        let (library, problems) = Library::load(&[(modules_dir(), true)], &BTreeMap::new());
         assert!(problems.is_empty(), "{problems:?}");
         library
     }
@@ -419,6 +506,17 @@ mod tests {
         let first = &view.rows[0];
         assert_eq!(first.canon, "Ps.51.3");
         assert!(first.cells[1].iter().any(|c| c.chapter == 50 && c.verse == 3), "{:?}", first.cells[1]);
+    }
+
+    #[test]
+    fn a_passage_crosses_chapters_in_the_module_numbering() {
+        let lib = library();
+        let vul = lib.get("VUL").unwrap();
+        let verses = passage(&vul, Ref::parse("Ps.23.1").unwrap(), Ref::parse("Ps.23.3").unwrap(), 50).unwrap();
+        assert_eq!(verses.iter().map(|v| (v.chapter, v.verse)).collect::<Vec<_>>(), [(22, 1), (22, 2), (22, 3)]);
+        let long = passage(&vul, Ref::parse("Gen.1.30").unwrap(), Ref::parse("Gen.2.2").unwrap(), 50).unwrap();
+        assert_eq!(long.iter().map(|v| (v.chapter, v.verse)).collect::<Vec<_>>(), [(1, 30), (1, 31), (2, 1), (2, 2)]);
+        assert_eq!(passage(&vul, Ref::parse("Gen.1.1").unwrap(), Ref::parse("Gen.50.26").unwrap(), 10).unwrap().len(), 10);
     }
 
     #[test]

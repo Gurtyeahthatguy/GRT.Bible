@@ -388,6 +388,7 @@ kbd {
 
 .marker.note { background: var(--accent); cursor: pointer; }
 .marker.bookmark { background: transparent; border: 2px solid var(--accent); }
+.marker.video { background: transparent; border: 2px solid var(--text-dim); border-radius: 2px; cursor: pointer; }
 
 .source-notes {
   margin-top: 2.5em;
@@ -717,9 +718,136 @@ kbd {
 
   .palette-list li { padding: 12px 10px; }
   .toast { top: 58px; }
+
+  #print-view .print-toolbar { gap: 6px 8px; padding: 6px 8px; }
+  #print-view .print-pages { padding: 8px; }
 }
 
+/* Library */
+
+.lib-focus { margin: 0 0 10px; }
+.lib-section { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 12px; }
+.lib-section:first-of-type { border-top: none; margin-top: 0; }
+.lib-section h3 { font-size: 13px; margin: 8px 0; }
+.lib-section details { margin-bottom: 8px; }
+.lib-section summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.lib-section select { max-width: 100%; }
+.group { margin: 6px 0; line-height: 1.7; }
+.group b { font-family: var(--reading-font); font-style: italic; font-weight: 600; }
+.link.ref, .link.key { display: inline; white-space: nowrap; }
+.preview {
+  font-family: var(--reading-font);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0 8px;
+  white-space: normal;
+}
+.preview p { margin: 0 0 6px; }
+.preview button { font-family: var(--ui-font); font-size: 13px; }
+.entry-wrap { margin: 10px 0 14px; }
+.entry-wrap summary, .entry-label { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--accent); cursor: pointer; }
+.entry {
+  font-family: var(--reading-font);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.entry p { margin: 0 0 0.7em; }
+.entry h3 { font-family: var(--ui-font); font-size: 16px; margin: 4px 0 8px; }
+.entry h4 { font-family: var(--ui-font); font-size: 13px; margin: 1em 0 0.4em; }
+.entry .vn { font-size: 0.65em; }
+.headwords { list-style: none; margin: 4px 0 10px; padding: 0; max-height: 34vh; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.headwords li { padding: 3px 0; }
+.sections { list-style: none; margin: 6px 0 10px; padding: 0; }
+.sections li { padding: 4px 0; border-bottom: 1px solid var(--bg-sunken); }
+.trail { font-size: 12px; margin: 8px 0 4px; }
+.kind-head { font-size: 13px; margin: 18px 0 8px; color: var(--text-dim); }
+.card.module p { margin: 2px 0; }
+
+.guide { font-size: 14px; line-height: 1.55; }
+.guide h2 { font-size: 18px; }
+.guide h3 { font-size: 15px; margin-top: 20px; }
+.guide h4, .guide h5 { font-size: 14px; }
+.guide pre { background: var(--bg-sunken); padding: 8px 10px; border-radius: 6px; overflow-x: auto; }
+.guide code { font-size: 12.5px; }
+.guide table { border-collapse: collapse; margin: 8px 0; }
+.guide td { border: 1px solid var(--border); padding: 4px 8px; vertical-align: top; }
+
+/* Printing: the preview, and the pages it prints */
+
+#print-view {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+#print-view .print-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+#print-view .print-toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+#print-view .print-controls { display: contents; }
+#print-view .print-spacer { flex: 1; }
+#print-view .print-count { font-size: 12px; color: var(--text-dim); }
+#print-view .print-pages { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+#print-view .print-frame { flex: none; }
+
+.print-page {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  color: #000;
+  box-sizing: border-box;
+  box-shadow: 0 1px 8px rgb(0 0 0 / 0.35);
+  transform-origin: top left;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  font-family: var(--reading-font);
+}
+.print-head, .print-foot {
+  position: absolute;
+  left: 18mm;
+  right: 18mm;
+  font-family: var(--ui-font);
+  font-size: 8pt;
+  color: #555;
+}
+.print-head { top: 12mm; display: flex; justify-content: space-between; border-bottom: 0.3pt solid #999; padding-bottom: 1mm; }
+.print-foot { bottom: 9mm; text-align: center; }
+.print-body { position: relative; overflow: hidden; }
+.print-text { color: #000; line-height: 1.45; font-family: var(--reading-font); }
+.print-text.chapter { max-width: none; margin: 0; font-size: inherit; line-height: 1.45; }
+.print-text h1 { font-family: var(--ui-font); font-size: 1.45em; font-weight: 600; margin: 0 0 0.5em; }
+.print-text .chapter-head { margin: 0 0 0.5em; }
+.print-text h2 { font-family: var(--ui-font); font-size: 0.85em; font-weight: 600; margin: 1.1em 0 0.35em; }
+.print-text p { margin: 0 0 0.6em; }
+.print-text .vn { color: #555; }
+.print-text .verse { cursor: default; }
+.print-text .fn-ref { color: #000; }
+.print-text .quote { font-style: italic; color: #333; }
+.print-text ol { padding-left: 1.4em; font-size: 0.85em; margin: 0; }
+.print-text ol li { margin-bottom: 0.3em; }
+.compare-row { display: grid; gap: 4mm; padding: 1.2mm 0; border-bottom: 0.3pt solid #ccc; }
+.compare-head { font-family: var(--ui-font); font-weight: 600; font-size: 0.85em; border-bottom: 0.6pt solid #777; }
+
 @media print {
-  .toolbar, .panel, .selection-bar, .parallel-bar, .chapter-head button { display: none !important; }
-  body, .reader { overflow: visible; height: auto; }
+  html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; display: block !important; }
+  body > *:not(#print-view) { display: none !important; }
+  #print-view { position: static !important; display: block !important; background: none !important; }
+  #print-view .print-toolbar { display: none !important; }
+  #print-view .print-pages { display: block !important; padding: 0 !important; overflow: visible !important; }
+  #print-view .print-frame { width: auto !important; height: auto !important; }
+  .print-page { box-shadow: none !important; transform: none !important; margin: 0 !important; break-after: page; page-break-after: always; }
+  .print-frame:last-child .print-page { break-after: auto; page-break-after: auto; }
 }

@@ -21,6 +21,15 @@ function fakeBackend() {
       books: [{ index: 1, osis: 'Gen', name: 'Genesis', abbrev: 'Gen', chapters: 2 }, { index: 17, osis: 'Tob', name: 'Tobiae', abbrev: 'Tob', chapters: 14 }, { index: 23, osis: 'Ps', name: 'Psalmi', abbrev: 'Ps', chapters: 150 }],
       summary: '', missingBooks: [] },
   ];
+  modules.push(
+    { kind: 'crossrefs', abbreviation: 'TSK', title: 'Treasury', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
+      books: [], summary: '3 groups of references', missingBooks: [], license: 'Public Domain', source: 'SWORD module TSK, version 1.4',
+      fileName: 'TSK.grtb', origin: { file: 'TSK.grtb', installed: '2026-10-27' } },
+    { kind: 'commentary', abbreviation: 'MHC', title: 'Matthew Henry', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
+      books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'MHC.grtb', origin: null },
+    { kind: 'dictionary', abbreviation: 'EAS', title: 'Easton', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
+      books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'EAS.grtb', origin: null },
+  );
   const offset = (module, book) => (module === 'BBB' && book === 'Ps' ? 1 : 0);
   const calls = [];
   const saved = { user: null, settings: null };
@@ -80,6 +89,17 @@ function fakeBackend() {
           durationS: 600, description: '', thumb: null, refs: [], tags: [],
         })),
       };
+      case 'crossrefs': return [{ module: 'TSK', title: 'Treasury', groups: [{ label: 'beginning', targets: ['Ps.23.1-Ps.23.2', 'John.1.1'] }] }];
+      case 'commentary': return [
+        { id: 1, parent: null, key: '', title: '', body: '<p>Intro.</p>', spans: [`${args.at.split('.').slice(0, 2).join('.')}.0`] },
+        { id: 2, parent: null, key: '', title: '', body: '<p>On <b>this</b> verse, see <a data-ref="John.1.1">John</a>.</p>', spans: [`${args.at}-${args.at}`] },
+      ];
+      case 'commentary_step': return 'Gen.2.4';
+      case 'passage': return [{ book: 'Ps', chapter: 22, verse: 1, text: 'Dominus regit me', canon: 'Ps.23.1' }, { book: 'Ps', chapter: 22, verse: 2, text: 'in loco pascuae', canon: 'Ps.23.2' }];
+      case 'lookup': return [{ id: 1, key: 'AARON', title: 'AARON', children: 0 }, { id: 2, key: 'ABBA', title: 'ABBA', children: 0 }].filter((r) => r.key.startsWith(args.text.toUpperCase()));
+      case 'entry': return { id: args.id, parent: null, key: 'AARON', title: 'AARON', body: '<p>Brother of <a data-key="MOSES">Moses</a>.</p>', spans: [] };
+      case 'entry_by_key': return { id: 9, parent: null, key: args.key, title: args.key, body: '<p>The lawgiver.</p>', spans: [] };
+      case 'guide': return '# Installing modules\n\nStep by step.';
       case 'user_save': saved.user = structuredClone(args.data); return null;
       case 'settings_save': saved.settings = structuredClone(args.settings); return null;
       default: return null;
@@ -242,6 +262,95 @@ describe('the interface', () => {
     openChannel.click();
     await wait();
     expect(backend.calls.some((c) => c.command === 'channel_open' && c.args.id === 'c1')).toBe(true);
+  });
+
+  it('shows the cross-references and the commentary of the selected verse', async () => {
+    document.querySelector('#reader .verse[data-verse="2"]').click();
+    await wait();
+    const references = [...document.querySelectorAll('#selection-bar button')].find((b) => b.textContent === 'References');
+    references.click();
+    await wait(120);
+    const panel = document.querySelector('#panel');
+    expect(panel.querySelector('.panel-head h2').textContent).toBe('Library');
+    expect([...panel.querySelectorAll('.tabs button')].map((b) => b.textContent)).toEqual(['This passage', 'Dictionary', 'Installed']);
+    const group = panel.querySelector('.group');
+    expect(group.querySelector('b').textContent).toBe('beginning ');
+    const refs = [...group.querySelectorAll('.ref')];
+    expect(refs.map((b) => b.textContent)).toEqual(['Sal 23,1-2', 'Gv 1,1']);
+    refs[0].click();
+    await wait();
+    expect(panel.querySelector('.preview').textContent).toContain('Dominus regit me');
+    const asked = backend.calls.filter((c) => c.command === 'crossrefs').pop();
+    expect(asked.args.at).toBe(backend.calls.filter((c) => c.command === 'commentary').pop().args.at);
+    expect(panel.querySelector('details.entry-wrap summary').textContent).toMatch(/^Introduction to /);
+    expect(panel.querySelector('.entry-wrap .entry b').textContent).toBe('this');
+  });
+
+  it('looks words up in a dictionary and follows its links', async () => {
+    const panel = document.querySelector('#panel');
+    [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Dictionary').click();
+    await wait(60);
+    await type(panel.querySelector('input[type="search"]'), 'aa');
+    await wait(200);
+    expect([...panel.querySelectorAll('.headwords button')].map((b) => b.textContent)).toEqual(['AARON']);
+    panel.querySelector('.headwords button').click();
+    await wait();
+    expect(panel.querySelector('.entry h3').textContent).toBe('AARON');
+    panel.querySelector('.entry .key').click();
+    await wait(250);
+    expect(panel.querySelector('.entry').textContent).toContain('The lawgiver.');
+  });
+
+  it('lists what is installed, with licence and where it came from', async () => {
+    const panel = document.querySelector('#panel');
+    [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Installed').click();
+    await wait(60);
+    const heads = [...panel.querySelectorAll('.kind-head')].map((h) => h.textContent);
+    expect(heads).toEqual(['Bibles (2)', 'Commentaries (1)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
+    const tsk = panel.querySelector('.card.module[data-module="TSK"]');
+    expect(tsk.textContent).toContain('Licence: Public Domain');
+    expect(tsk.textContent).toContain('Installed from TSK.grtb on 2026-10-27.');
+    expect(panel.querySelector('.card.module[data-module="AAA"]').textContent).toContain('Comes with the program.');
+    [...panel.querySelectorAll('button')].find((b) => b.textContent === 'How to find and install modules').click();
+    await wait();
+    expect(document.querySelector('.guide h2').textContent).toBe('Installing modules');
+    key(document.body, 'Escape');
+  });
+
+  it('prints the chapter, the selection or the notes on fixed pages', async () => {
+    key(document.body, 'p', { ctrlKey: true });
+    await wait(60);
+    const view = document.querySelector('#print-view');
+    expect(view).not.toBeNull();
+    const what = view.querySelector('select');
+    expect([...what.options].map((o) => o.value)).toEqual(['selection', 'chapter', 'notes']);
+    expect(view.querySelectorAll('.print-page').length).toBeGreaterThan(0);
+    expect(view.querySelector('.print-head').textContent).toBe('Genesi 2AAA');
+    what.value = 'notes';
+    what.dispatchEvent(new Event('change'));
+    await wait(60);
+    expect(view.querySelector('.print-page').textContent).toContain('Light before the sun.');
+    key(document.body, 'Escape');
+    expect(document.querySelector('#print-view')).toBeNull();
+  });
+
+  it('links a video to the selected verses and keeps it in a list', async () => {
+    const user = app.ctx.user();
+    user.video_lists.push({ id: 'l1', name: 'Psalms', videos: [] });
+    document.querySelector('#btn-videos').click();
+    await wait(80);
+    const panel = document.querySelector('#panel');
+    const first = panel.querySelector('.card.video');
+    const link = [...first.querySelectorAll('button')].find((b) => b.textContent.startsWith('Link to'));
+    link.click();
+    await wait(80);
+    expect(user.video_anchors).toHaveLength(1);
+    expect(user.video_anchors[0]).toMatchObject({ video: 'v0' });
+    expect(document.querySelector('#reader .marker.video')).not.toBeNull();
+    const picker = panel.querySelector('.card.video select') || document.querySelector('#panel .card.video select');
+    picker.value = 'l1';
+    picker.dispatchEvent(new Event('change'));
+    expect(user.video_lists[0].videos).toEqual(['v0']);
   });
 
   it('keeps preferences between sessions', () => {

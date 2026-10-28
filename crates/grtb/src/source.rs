@@ -101,6 +101,9 @@ fn shift_chapters(mut body: BookContent, chapter: Option<u16>, offset: i32) -> B
     for n in &mut body.notes {
         n.chapter = fix(n.chapter);
     }
+    for t in &mut body.tagged {
+        t.chapter = fix(t.chapter);
+    }
     body
 }
 
@@ -109,6 +112,7 @@ fn take_chapters(body: &BookContent, keep: impl Fn(u16) -> bool) -> BookContent 
         verses: body.verses.iter().filter(|v| keep(v.chapter)).cloned().collect(),
         titles: body.titles.iter().filter(|t| keep(t.chapter)).cloned().collect(),
         notes: body.notes.iter().filter(|n| keep(n.chapter)).cloned().collect(),
+        tagged: body.tagged.iter().filter(|t| keep(t.chapter)).cloned().collect(),
     }
 }
 
@@ -116,6 +120,7 @@ fn append(target: &mut BookContent, extra: BookContent) {
     target.verses.extend(extra.verses);
     target.titles.extend(extra.titles);
     target.notes.extend(extra.notes);
+    target.tagged.extend(extra.tagged);
 }
 
 /// Fits source books into the 73-book canon and its chapter layout.

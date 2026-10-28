@@ -23,6 +23,14 @@ export const DEFAULTS = {
   videos: null,
   panel: null,
   searchScope: 'module',
+  library: { tab: 'passage', commentary: null, dictionary: null, book: null },
+  print: { paper: 'a4', size: 11, numbers: true, headings: true, editionNotes: false, myNotes: false },
+};
+
+export const PAPERS = {
+  a4: { label: 'A4', width: 210, height: 297 },
+  a5: { label: 'A5', width: 148, height: 210 },
+  letter: { label: 'Letter', width: 215.9, height: 279.4 },
 };
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -52,6 +60,19 @@ export function normalise(raw = {}) {
   if (raw.videos === true || raw.videos === false) s.videos = raw.videos;
   if (typeof raw.panel === 'string' || raw.panel === null) s.panel = raw.panel ?? null;
   if (raw.searchScope === 'module' || raw.searchScope === 'all') s.searchScope = raw.searchScope;
+  if (raw.library && typeof raw.library === 'object') {
+    if (['passage', 'dictionary', 'books', 'installed'].includes(raw.library.tab)) s.library.tab = raw.library.tab;
+    for (const key of ['commentary', 'dictionary', 'book']) {
+      if (typeof raw.library[key] === 'string') s.library[key] = raw.library[key];
+    }
+  }
+  if (raw.print && typeof raw.print === 'object') {
+    if (PAPERS[raw.print.paper]) s.print.paper = raw.print.paper;
+    if (Number.isFinite(raw.print.size)) s.print.size = clamp(Math.round(raw.print.size), 8, 16);
+    for (const key of ['numbers', 'headings', 'editionNotes', 'myNotes']) {
+      if (typeof raw.print[key] === 'boolean') s.print[key] = raw.print[key];
+    }
+  }
   return s;
 }
 

@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-8741}"
+# Study packs to show beside the translations: packs/ and, if given, a folder of converted modules.
+EXTRA="${2:-}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -16,9 +18,10 @@ for entry in "$ROOT"/src/*; do
 done
 cp "$ROOT/scripts/preview-stub.js" "$STAGE/backend-stub.js"
 
-python3 - "$ROOT/modules" "$STAGE/preview-data.js" <<'EXPORT'
+python3 - "$ROOT/modules" "$STAGE/preview-data.js" "$ROOT/packs" "$EXTRA" <<'EXPORT'
 import json, sqlite3, sys, pathlib
 modules_dir, out = pathlib.Path(sys.argv[1]), sys.argv[2]
+pack_dirs = [pathlib.Path(p) for p in sys.argv[3:] if p]
 wanted = {'Gen': [1, 2, 3], 'Ps': [22, 23, 50, 51], 'Isa': [53], 'Matt': [5], 'John': [1, 3], 'Rom': [8]}
 data = []
 for path in sorted(modules_dir.glob('*.grtb')):
@@ -40,8 +43,32 @@ videos = [dict(id=v['id'], title=v['title'], host='www.youtube.com', channel=v.g
                source=v.get('source', ''), language=v.get('language', ''), durationS=v.get('duration_s'), description='',
                thumb=None, refs=v.get('refs', []), tags=v.get('tags', [])) for v in catalog['videos']]
 channels = [dict(c, videos=sum(1 for v in videos if v['channel'] == c['id'])) for c in catalog.get('channels', [])]
+index = {b['osis']: b['index'] for m in data for b in m['books']}
+spans = [(index[o] * 1_000_000 + c * 1000, index[o] * 1_000_000 + c * 1000 + 999) for o, cs in wanted.items() if o in index for c in cs]
+spans += [(index[o] * 1_000_000, index[o] * 1_000_000) for o in wanted if o in index]
+inside = lambda n: any(a <= n <= b for a, b in spans)
+packs = []
+for folder in pack_dirs:
+    for path in sorted(folder.glob('*.grtb')) if folder.is_dir() else []:
+        db = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+        meta = dict(db.execute('select key, value from meta'))
+        kind = meta.get('kind', 'bible')
+        if kind == 'bible':
+            continue
+        pack = dict(meta=meta, file=path.name, entries=[], spans=[], links=[])
+        if kind == 'crossrefs':
+            pack['links'] = [dict(first=a, last=b, label=l, targets=t) for a, b, l, t in db.execute('select first, last, label, targets from links order by position') if inside(a)]
+        else:
+            rows = db.execute('select id, parent, key, title, body from entries order by id').fetchall()
+            all_spans = db.execute('select entry, first, last from spans').fetchall()
+            keep = {e for e, a, b in all_spans if inside(a)} if kind == 'commentary' else {r[0] for r in rows[:400]}
+            pack['entries'] = [dict(id=i, parent=p, key=k, title=t, body=b) for i, p, k, t, b in rows if i in keep]
+            pack['spans'] = [dict(entry=e, first=a, last=b) for e, a, b in all_spans if e in keep]
+        packs.append(pack)
 with open(out, 'w') as f:
     f.write('window.__PREVIEW_DATA__ = ' + json.dumps(data, ensure_ascii=False) + ';\n')
+    f.write('window.__PREVIEW_PACKS__ = ' + json.dumps(packs, ensure_ascii=False) + ';\n')
+    f.write('window.__PREVIEW_GUIDE__ = ' + json.dumps((modules_dir.parent / 'MODULES.md').read_text(), ensure_ascii=False) + ';\n')
     f.write('window.__PREVIEW_VIDEOS__ = ' + json.dumps(dict(channels=channels, videos=videos), ensure_ascii=False) + ';\n')
 EXPORT
 
