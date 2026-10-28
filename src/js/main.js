@@ -552,9 +552,15 @@ async function showPanel(kind, options = {}) {
 
 const PANEL_BUTTONS = [['#btn-search', 'search'], ['#btn-study', 'study'], ['#btn-library', 'library'], ['#btn-videos', 'videos']];
 
-const refreshLibrarySoon = debounce(() => {
-  if (state.panel === 'library') showPanel('library');
+// Redraws the tab that asked, never one the reader has moved to since.
+let refreshTab = null;
+const redrawLibrary = debounce(() => {
+  if (state.panel === 'library' && state.libraryTab === refreshTab) showPanel('library');
 }, 250);
+const refreshLibrarySoon = () => {
+  refreshTab = state.libraryTab;
+  redrawLibrary();
+};
 
 const refreshPanelSoon = debounce(() => refreshPanel(), 250);
 

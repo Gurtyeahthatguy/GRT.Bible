@@ -292,6 +292,8 @@ describe('the interface', () => {
 
   it('looks words up in a dictionary and follows its links', async () => {
     const panel = document.querySelector('#panel');
+    // A verse selected just before leaving the passage tab must not redraw the dictionary.
+    document.querySelector('#reader .verse[data-verse="3"]').click();
     [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Dictionary').click();
     await wait(60);
     await type(panel.querySelector('input[type="search"]'), 'aa');
