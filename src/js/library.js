@@ -237,8 +237,12 @@ async function dictionaryTab(container, ctx, options = {}) {
     article.scrollIntoView?.({ block: 'nearest' });
   };
 
+  // Answers can arrive out of order; only the latest lookup draws the list.
+  let asked = 0;
   const search = async () => {
+    const ticket = ++asked;
     const found = await api.lookup(chosen.abbreviation, input.value, 80);
+    if (ticket !== asked) return found;
     clear(list, found.map((row) => h('li', {}, h('button', {
       type: 'button',
       class: 'link',

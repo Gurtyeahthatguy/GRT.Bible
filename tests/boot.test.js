@@ -96,7 +96,11 @@ function fakeBackend() {
       ];
       case 'commentary_step': return 'Gen.2.4';
       case 'passage': return [{ book: 'Ps', chapter: 22, verse: 1, text: 'Dominus regit me', canon: 'Ps.23.1' }, { book: 'Ps', chapter: 22, verse: 2, text: 'in loco pascuae', canon: 'Ps.23.2' }];
-      case 'lookup': return [{ id: 1, key: 'AARON', title: 'AARON', children: 0 }, { id: 2, key: 'ABBA', title: 'ABBA', children: 0 }].filter((r) => r.key.startsWith(args.text.toUpperCase()));
+      case 'lookup': {
+        // The first, empty lookup answers last, as a slow backend may.
+        if (!args.text) await wait(400);
+        return [{ id: 1, key: 'AARON', title: 'AARON', children: 0 }, { id: 2, key: 'ABBA', title: 'ABBA', children: 0 }].filter((r) => r.key.startsWith(args.text.toUpperCase()));
+      }
       case 'entry': return { id: args.id, parent: null, key: 'AARON', title: 'AARON', body: '<p>Brother of <a data-key="MOSES">Moses</a>.</p>', spans: [] };
       case 'entry_by_key': return { id: 9, parent: null, key: args.key, title: args.key, body: '<p>The lawgiver.</p>', spans: [] };
       case 'guide': return '# Installing modules\n\nStep by step.';
@@ -291,7 +295,7 @@ describe('the interface', () => {
     [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Dictionary').click();
     await wait(60);
     await type(panel.querySelector('input[type="search"]'), 'aa');
-    await wait(200);
+    await wait(500);
     expect([...panel.querySelectorAll('.headwords button')].map((b) => b.textContent)).toEqual(['AARON']);
     panel.querySelector('.headwords button').click();
     await wait();
