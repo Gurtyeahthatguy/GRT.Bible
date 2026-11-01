@@ -389,8 +389,26 @@ struct PassageOpen {
     stack_len: usize,
 }
 
+/// No entry is converted past this many bytes, nor nested deeper than this.
+pub const ENTRY_LIMIT: usize = 4 * 1024 * 1024;
+const DEPTH_LIMIT: usize = 200;
+const INLINE_LIMIT: usize = 24;
+
+/// The text cut at a character boundary below the limit.
+fn bounded(raw: &str) -> &str {
+    if raw.len() <= ENTRY_LIMIT {
+        return raw;
+    }
+    let mut end = ENTRY_LIMIT;
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    &raw[..end]
+}
+
 /// Converts one entry of the source into the stored subset.
 pub fn to_markup(raw: &str, source: Source, resolve: Resolver) -> String {
+    let raw = bounded(raw);
     if source == Source::Plain {
         return plain(raw);
     }
@@ -428,7 +446,14 @@ pub fn to_markup(raw: &str, source: Source, resolve: Resolver) -> String {
                     end_role(&mut b, role, &mut passages, resolve);
                     continue;
                 }
-                let r = role(source, raw_name, attrs);
+                let mut r = role(source, raw_name, attrs);
+                // Past these depths an element keeps its words and loses its meaning.
+                if open_roles.len() >= DEPTH_LIMIT || skip_depth.len() >= DEPTH_LIMIT {
+                    continue;
+                }
+                if matches!(r, Role::Inline(_) | Role::EntryLink | Role::Note) && b.stack.len() >= INLINE_LIMIT {
+                    r = Role::Transparent;
+                }
                 if empty || milestone_end(attrs) {
                     match r {
                         Role::Paragraph | Role::Heading => b.paragraph(),
@@ -588,6 +613,7 @@ fn push_tag(pieces: &mut Vec<Piece>, lemma: Option<String>, morph: Option<String
 
 /// The verse with its tagged words marked, when the source tags any.
 pub fn tag_words(raw: &str, source: Source) -> Option<String> {
+    let raw = bounded(raw);
     let mut pieces: Vec<Piece> = Vec::new();
     let mut skip: Vec<String> = Vec::new();
     let mut word: Option<(String, Vec<String>, Vec<String>)> = None;
@@ -620,7 +646,7 @@ pub fn tag_words(raw: &str, source: Source) -> Option<String> {
                     continue;
                 }
                 let empty = empty || VOID.contains(&key.as_str());
-                if !closing && !empty && skipped.contains(&key.as_str()) {
+                if !closing && !empty && skipped.contains(&key.as_str()) && skip.len() < DEPTH_LIMIT {
                     skip.push(key);
                     continue;
                 }
@@ -692,6 +718,61 @@ pub fn tag_words(raw: &str, source: Source) -> Option<String> {
     Some(out.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
+/// A Strong's number as `G26` or `H7225`, from `strong:G0026`, `G26` or `H07225a`.
+pub fn strong_number(value: &str) -> Option<String> {
+    let v = value.trim().trim_start_matches("strong:").trim_start_matches("x-Strongs:");
+    let mut chars = v.chars();
+    let letter = chars.next()?.to_ascii_uppercase();
+    if letter != 'G' && letter != 'H' {
+        return None;
+    }
+    let digits: String = chars.take_while(char::is_ascii_digit).collect();
+    let n: u32 = digits.parse().ok()?;
+    (n > 0).then(|| format!("{letter}{n}"))
+}
+
+/// The words of a tagged verse: tagged words with their first Strong's number and
+/// morphology, untagged words as they are, punctuation kept with the word before it.
+pub fn words_from_tagged(markup: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let mut current: Option<(String, String, String)> = None;
+    let push_text = |out: &mut Vec<(String, String, String)>, text: &str| {
+        let decoded = decode_entities(text);
+        let starts_glued = !decoded.starts_with(char::is_whitespace);
+        for (i, piece) in decoded.split_whitespace().enumerate() {
+            let only_marks = !piece.chars().any(char::is_alphanumeric);
+            if (only_marks || (i == 0 && starts_glued)) && !out.is_empty() {
+                out.last_mut().unwrap().0.push_str(piece);
+            } else {
+                out.push((piece.to_string(), String::new(), String::new()));
+            }
+        }
+    };
+    for token in tokens(markup) {
+        match token {
+            Token::Text(t) => match &mut current {
+                Some((text, _, _)) => text.push_str(&decode_entities(t)),
+                None => push_text(&mut out, t),
+            },
+            Token::Tag { raw_name: "w", closing: false, attrs, .. } => {
+                let strong = attr(attrs, "lemma").unwrap_or_default().split_whitespace().find_map(strong_number).unwrap_or_default();
+                let morph = attr(attrs, "morph").unwrap_or_default().split_whitespace().next().unwrap_or("").to_string();
+                current = Some((String::new(), strong, morph));
+            }
+            Token::Tag { raw_name: "w", closing: true, .. } => {
+                if let Some((text, strong, morph)) = current.take() {
+                    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !text.is_empty() {
+                        out.push((text, strong, morph));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -761,6 +842,20 @@ mod tests {
         let thml = r#"Jesus<sync type="Strongs" value="G2424"/> wept."#;
         assert_eq!(tag_words(thml, Source::Thml).unwrap(), r#"<w lemma="strong:G2424">Jesus</w> wept."#);
         assert!(tag_words("Plain <i>text</i>.", Source::Osis).is_none());
+    }
+
+    #[test]
+    fn words_of_a_tagged_verse() {
+        let words = words_from_tagged(r#"<w lemma="strong:H07225" morph="x">In the beginning</w> <w lemma="strong:H0430">God</w>, made it."#);
+        assert_eq!(words, vec![
+            ("In the beginning".to_string(), "H7225".to_string(), "x".to_string()),
+            ("God,".to_string(), "H430".to_string(), String::new()),
+            ("made".to_string(), String::new(), String::new()),
+            ("it.".to_string(), String::new(), String::new()),
+        ]);
+        assert_eq!(strong_number("strong:G0026").as_deref(), Some("G26"));
+        assert_eq!(strong_number("H07225a").as_deref(), Some("H7225"));
+        assert!(strong_number("lemma.TR:logos").is_none());
     }
 
     #[test]

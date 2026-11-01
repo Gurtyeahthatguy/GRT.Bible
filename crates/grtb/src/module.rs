@@ -5,7 +5,7 @@
 //! Every other kind keeps its references in the internal scheme, already
 //! mapped from the numbering of its source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
@@ -16,7 +16,7 @@ use crate::integrity::Report;
 use crate::refs::Ref;
 use crate::text::fold;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub const EXTENSION: &str = "grtb";
 const APPLICATION_ID: i64 = 0x4752_5442;
 
@@ -64,6 +64,33 @@ CREATE TABLE tagged (
     markup      TEXT NOT NULL,
     PRIMARY KEY (book_id, chapter, verse)
 );
+CREATE TABLE lemmas (
+    id          INTEGER PRIMARY KEY,
+    lemma       TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    strong      TEXT NOT NULL,
+    gloss       TEXT NOT NULL,
+    xlit        TEXT NOT NULL
+);
+CREATE TABLE morphs (
+    id          INTEGER PRIMARY KEY,
+    code        TEXT NOT NULL,
+    features    TEXT NOT NULL
+);
+CREATE TABLE words (
+    book_id     INTEGER NOT NULL,
+    chapter     INTEGER NOT NULL,
+    verse       INTEGER NOT NULL,
+    position    INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    lemma       INTEGER,
+    morph       INTEGER,
+    PRIMARY KEY (book_id, chapter, verse, position)
+) WITHOUT ROWID;
+CREATE INDEX lemmas_key ON lemmas (key);
+CREATE INDEX lemmas_strong ON lemmas (strong);
+CREATE INDEX words_lemma ON words (lemma);
+CREATE INDEX words_morph ON words (morph);
 ";
 
 const RESOURCE_SCHEMA: &str = "
@@ -92,6 +119,11 @@ CREATE INDEX entries_fold ON entries (fold);
 CREATE INDEX entries_parent ON entries (parent, id);
 CREATE INDEX spans_first ON spans (first, last);
 CREATE INDEX links_first ON links (first, last);
+CREATE TABLE aliases (
+    entry       INTEGER NOT NULL,
+    alias       TEXT NOT NULL
+);
+CREATE INDEX aliases_alias ON aliases (alias);
 ";
 
 /// What a module holds.
@@ -224,12 +256,33 @@ pub struct TaggedRow {
     pub markup: String,
 }
 
+/// One word of a verse with its lemma, Strong's number and morphology, where the source gives them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordRow {
+    pub chapter: u16,
+    pub verse: u16,
+    /// The word as printed, punctuation included.
+    pub text: String,
+    pub lemma: String,
+    /// `G26` or `H7225`.
+    pub strong: String,
+    pub gloss: String,
+    /// The lemma in Latin letters, when the source gives it.
+    pub xlit: String,
+    /// `scheme:code`, as `morph::features` reads it.
+    pub morph: String,
+    /// Which morpheme of a Hebrew word carries its lemma.
+    pub main: u8,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BookContent {
     pub verses: Vec<VerseRow>,
     pub titles: Vec<TitleRow>,
     pub notes: Vec<NoteRow>,
     pub tagged: Vec<TaggedRow>,
+    /// In reading order within each verse.
+    pub words: Vec<WordRow>,
 }
 
 impl BookContent {
@@ -245,6 +298,7 @@ impl BookContent {
         self.notes.sort_by_key(|n| (n.chapter, n.verse));
         self.tagged.sort_by_key(|t| (t.chapter, t.verse));
         self.tagged.dedup_by_key(|t| (t.chapter, t.verse));
+        self.words.sort_by_key(|w| (w.chapter, w.verse));
     }
 }
 
@@ -260,6 +314,8 @@ pub struct EntryContent {
     pub body: String,
     /// Internal ranges a commentary entry speaks about.
     pub spans: Vec<(Ref, Ref)>,
+    /// Other names an entry is found by: `G26`, `H7225`, a lemma.
+    pub aliases: Vec<String>,
 }
 
 /// The references one verse sends the reader to, under one heading.
@@ -308,8 +364,11 @@ pub fn write(path: &Path, content: &ModuleContent) -> Result<(), String> {
         db.pragma_update(None, "application_id", APPLICATION_ID).map_err(err)?;
         let tx = db.unchecked_transaction().map_err(err)?;
 
-        let mut meta: Vec<(String, String)> =
-            content.manifest.pairs().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        // A module declares the oldest schema that reads it, so 0.2 still opens what needs nothing newer.
+        let mut manifest = content.manifest.clone();
+        let needs_words = content.books.values().any(|b| !b.words.is_empty()) || content.entries.iter().any(|e| !e.aliases.is_empty());
+        manifest.schema_version = manifest.schema_version.min(if needs_words { SCHEMA_VERSION } else { 2 });
+        let mut meta: Vec<(String, String)> = manifest.pairs().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         if let Some(report) = &content.integrity {
             meta.push(("integrity".into(), serde_json::to_string(report).map_err(err)?));
         }
@@ -322,6 +381,8 @@ pub fn write(path: &Path, content: &ModuleContent) -> Result<(), String> {
             write_resources(&tx, content)?;
         }
         let language = content.manifest.language.as_str();
+        let mut lemma_ids: HashMap<LemmaKey, i64> = HashMap::new();
+        let mut morph_ids: HashMap<(String, u8), i64> = HashMap::new();
         for (index, body) in content.books.iter().filter(|_| bible) {
             let b = book(*index).ok_or_else(|| format!("no canon book {index}"))?;
             let (name, abbrev) = b.name_in(language);
@@ -365,6 +426,7 @@ pub fn write(path: &Path, content: &ModuleContent) -> Result<(), String> {
                 )
                 .map_err(err)?;
             }
+            write_words(&tx, b.index, &body.words, language, &mut lemma_ids, &mut morph_ids)?;
         }
         if bible {
             tx.execute("INSERT INTO verses_fts (verses_fts) VALUES ('optimize')", []).map_err(err)?;
@@ -374,6 +436,60 @@ pub fn write(path: &Path, content: &ModuleContent) -> Result<(), String> {
         db.execute("VACUUM INTO ?1", params![target]).map_err(err)?;
     }
     std::fs::remove_file(&staging).map_err(err)?;
+    Ok(())
+}
+
+type LemmaKey = (String, String, String, String);
+
+fn write_words(
+    tx: &rusqlite::Transaction,
+    book: u8,
+    words: &[WordRow],
+    language: &str,
+    lemma_ids: &mut HashMap<LemmaKey, i64>,
+    morph_ids: &mut HashMap<(String, u8), i64>,
+) -> Result<(), String> {
+    let mut position = 0u32;
+    let mut at = (0u16, 0u16);
+    for w in words {
+        if (w.chapter, w.verse) != at {
+            at = (w.chapter, w.verse);
+            position = 0;
+        }
+        position += 1;
+        let lemma = if w.lemma.is_empty() && w.strong.is_empty() {
+            None
+        } else {
+            let key = (w.lemma.clone(), w.strong.clone(), w.gloss.clone(), w.xlit.clone());
+            let next = lemma_ids.len() as i64 + 1;
+            let id = *lemma_ids.entry(key).or_insert(next);
+            if id == next {
+                tx.execute(
+                    "INSERT INTO lemmas (id, lemma, key, strong, gloss, xlit) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![id, w.lemma, fold(&w.lemma, language), w.strong, w.gloss, w.xlit],
+                )
+                .map_err(err)?;
+            }
+            Some(id)
+        };
+        let morph = if w.morph.is_empty() {
+            None
+        } else {
+            let next = morph_ids.len() as i64 + 1;
+            let id = *morph_ids.entry((w.morph.clone(), w.main)).or_insert(next);
+            if id == next {
+                let features = crate::morph::features(&w.morph, w.main as usize).unwrap_or_default();
+                tx.execute("INSERT INTO morphs (id, code, features) VALUES (?1, ?2, ?3)", params![id, w.morph, features])
+                    .map_err(err)?;
+            }
+            Some(id)
+        };
+        tx.execute(
+            "INSERT INTO words (book_id, chapter, verse, position, text, lemma, morph) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![book, w.chapter, w.verse, position, w.text, lemma, morph],
+        )
+        .map_err(err)?;
+    }
     Ok(())
 }
 
@@ -389,6 +505,10 @@ fn write_resources(tx: &rusqlite::Transaction, content: &ModuleContent) -> Resul
         .map_err(err)?;
         for (a, b) in &e.spans {
             tx.execute("INSERT INTO spans (entry, first, last) VALUES (?1, ?2, ?3)", params![id, pack(*a), pack(*b)])
+                .map_err(err)?;
+        }
+        for alias in &e.aliases {
+            tx.execute("INSERT INTO aliases (entry, alias) VALUES (?1, ?2)", params![id, fold(alias.trim(), language)])
                 .map_err(err)?;
         }
     }
@@ -440,6 +560,50 @@ pub struct Heading {
     pub children: u32,
 }
 
+/// A word as the interface reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordView {
+    pub verse: u16,
+    pub position: u32,
+    pub text: String,
+    pub lemma: String,
+    pub strong: String,
+    pub gloss: String,
+    pub morph: String,
+    pub features: String,
+    pub xlit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Occurrence {
+    pub book: u8,
+    pub chapter: u16,
+    pub verse: u16,
+    pub position: u32,
+    pub text: String,
+    pub features: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LemmaRow {
+    pub id: i64,
+    pub lemma: String,
+    pub strong: String,
+    pub gloss: String,
+    pub xlit: String,
+}
+
+/// Book, chapter and verse, with the positions of the words that matched there.
+pub type WordMatch = (u8, u16, u16, Vec<u32>);
+
+/// What a word must be to match: some lemmas, a features pattern, a printed form.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WordFilter {
+    pub lemma_ids: Vec<i64>,
+    pub features: Option<String>,
+    pub text: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hit {
     pub book: u8,
@@ -463,6 +627,8 @@ impl Module {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        // A module is a file from elsewhere: nothing in its schema may run functions.
+        db.execute_batch("PRAGMA trusted_schema = OFF;").map_err(err)?;
         let id: i64 = db
             .query_row("PRAGMA application_id", [], |r| r.get(0))
             .map_err(|_| format!("{} is not a GRT Bible module", path.display()))?;
@@ -493,10 +659,19 @@ impl Module {
         } else {
             &["entries", "spans", "links"]
         };
+        // Views and triggers have no place in a module, and a view named like a table could do anything.
+        let foreign: Option<String> = self
+            .db
+            .query_row("SELECT name FROM sqlite_master WHERE type IN ('view', 'trigger') LIMIT 1", [], |r| r.get(0))
+            .optional()
+            .map_err(err)?;
+        if let Some(name) = foreign {
+            return Err(format!("the module holds a view or trigger ('{name}'), which no module needs"));
+        }
         for table in needed {
             let found = self
                 .db
-                .query_row("SELECT 1 FROM sqlite_master WHERE name = ?1", params![table], |_| Ok(()))
+                .query_row("SELECT 1 FROM sqlite_master WHERE name = ?1 AND type = 'table'", params![table], |_| Ok(()))
                 .optional()
                 .map_err(err)?;
             if found.is_none() {
@@ -611,10 +786,173 @@ impl Module {
         rows.collect::<Result<_, _>>().map_err(err)
     }
 
-    /// The entry whose headword is exactly this, ignoring case and accents.
+    /// The entry whose headword or alias is exactly this, ignoring case and accents.
     pub fn entry_by_key(&self, key: &str) -> Result<Option<EntryRow>, String> {
         let folded = fold(key.trim(), &self.manifest.language);
-        Ok(self.entry_rows("SELECT id, parent, key, title, body FROM entries WHERE fold = ?1 ORDER BY id LIMIT 1", params![folded])?.pop())
+        if let Some(found) = self.entry_rows("SELECT id, parent, key, title, body FROM entries WHERE fold = ?1 ORDER BY id LIMIT 1", params![folded])?.pop() {
+            return Ok(Some(found));
+        }
+        if !self.has_table("aliases")? {
+            return Ok(None);
+        }
+        Ok(self
+            .entry_rows(
+                "SELECT id, parent, key, title, body FROM entries WHERE id = (SELECT entry FROM aliases WHERE alias = ?1 ORDER BY entry LIMIT 1)",
+                params![folded],
+            )?
+            .pop())
+    }
+
+    fn has_table(&self, name: &str) -> Result<bool, String> {
+        Ok(self
+            .db
+            .query_row("SELECT 1 FROM sqlite_master WHERE name = ?1 AND type = 'table'", params![name], |_| Ok(()))
+            .optional()
+            .map_err(err)?
+            .is_some())
+    }
+
+    /// Whether the module carries words with lemmas or morphology.
+    pub fn has_words(&self) -> Result<bool, String> {
+        if self.kind() != "bible" || !self.has_table("words")? {
+            return Ok(false);
+        }
+        self.db.query_row("SELECT EXISTS (SELECT 1 FROM words)", [], |r| r.get::<_, bool>(0)).map_err(err)
+    }
+
+    /// The words of a chapter, in order, with what is known of each.
+    pub fn chapter_words(&self, book: u8, chapter: u16) -> Result<Vec<WordView>, String> {
+        if !self.has_table("words")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT w.verse, w.position, w.text, COALESCE(l.lemma, ''), COALESCE(l.strong, ''), COALESCE(l.gloss, ''),
+                        COALESCE(m.code, ''), COALESCE(m.features, ''), COALESCE(l.xlit, '')
+                 FROM words w LEFT JOIN lemmas l ON l.id = w.lemma LEFT JOIN morphs m ON m.id = w.morph
+                 WHERE w.book_id = ?1 AND w.chapter = ?2 ORDER BY w.verse, w.position",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![book, chapter], |r| {
+                Ok(WordView {
+                    verse: r.get(0)?,
+                    position: r.get(1)?,
+                    text: r.get(2)?,
+                    lemma: r.get(3)?,
+                    strong: r.get(4)?,
+                    gloss: r.get(5)?,
+                    morph: r.get(6)?,
+                    features: r.get(7)?,
+                    xlit: r.get(8)?,
+                })
+            })
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// Lemmas with a Strong's number, or whose folded form is this.
+    pub fn find_lemmas(&self, strong: Option<&str>, lemma: Option<&str>) -> Result<Vec<LemmaRow>, String> {
+        if !self.has_table("lemmas")? {
+            return Ok(Vec::new());
+        }
+        let (sql, arg) = match (strong, lemma) {
+            (Some(s), _) => ("SELECT id, lemma, strong, gloss, xlit FROM lemmas WHERE strong = ?1 ORDER BY id", s.to_string()),
+            (None, Some(l)) => ("SELECT id, lemma, strong, gloss, xlit FROM lemmas WHERE key = ?1 ORDER BY id", fold(l.trim(), &self.manifest.language)),
+            _ => return Ok(Vec::new()),
+        };
+        let mut stmt = self.db.prepare_cached(sql).map_err(err)?;
+        let rows = stmt
+            .query_map(params![arg], |r| Ok(LemmaRow { id: r.get(0)?, lemma: r.get(1)?, strong: r.get(2)?, gloss: r.get(3)?, xlit: r.get(4)? }))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// The verses where words match, each with the positions of the matching words.
+    pub fn word_matches(&self, filter: &WordFilter) -> Result<Vec<WordMatch>, String> {
+        if !self.has_table("words")? {
+            return Ok(Vec::new());
+        }
+        let mut conditions = Vec::new();
+        let mut args: Vec<String> = Vec::new();
+        if !filter.lemma_ids.is_empty() {
+            conditions.push(format!("w.lemma IN ({})", filter.lemma_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(pattern) = &filter.features {
+            args.push(pattern.clone());
+            conditions.push(format!("w.morph IN (SELECT id FROM morphs WHERE features LIKE ?{})", args.len()));
+        }
+        if let Some(text) = &filter.text {
+            args.push(text.clone());
+            conditions.push(format!("w.text = ?{}", args.len()));
+        }
+        if conditions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT w.book_id, w.chapter, w.verse, w.position FROM words w WHERE {} ORDER BY w.book_id, w.chapter, w.verse, w.position LIMIT 500000",
+            conditions.join(" AND ")
+        );
+        let mut stmt = self.db.prepare(&sql).map_err(err)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args.iter()), |r| Ok((r.get::<_, u8>(0)?, r.get::<_, u16>(1)?, r.get::<_, u16>(2)?, r.get::<_, u32>(3)?)))
+            .map_err(err)?;
+        let mut out: Vec<WordMatch> = Vec::new();
+        for row in rows {
+            let (b, c, v, p) = row.map_err(err)?;
+            match out.last_mut() {
+                Some(last) if (last.0, last.1, last.2) == (b, c, v) => last.3.push(p),
+                _ => out.push((b, c, v, vec![p])),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every occurrence of some lemmas: place, position, printed form and features.
+    pub fn occurrences(&self, lemma_ids: &[i64], limit: u32) -> Result<Vec<Occurrence>, String> {
+        if lemma_ids.is_empty() || !self.has_table("words")? {
+            return Ok(Vec::new());
+        }
+        let ids = lemma_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT w.book_id, w.chapter, w.verse, w.position, w.text, COALESCE(m.features, '')
+             FROM words w LEFT JOIN morphs m ON m.id = w.morph WHERE w.lemma IN ({ids})
+             ORDER BY w.book_id, w.chapter, w.verse, w.position LIMIT ?1"
+        );
+        let mut stmt = self.db.prepare(&sql).map_err(err)?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(Occurrence { book: r.get(0)?, chapter: r.get(1)?, verse: r.get(2)?, position: r.get(3)?, text: r.get(4)?, features: r.get(5)? })
+            })
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// The verses whose text matches a folded FTS5 query, in canon order.
+    pub fn text_matches(&self, fts: &str) -> Result<Vec<(u8, u16, u16)>, String> {
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT v.book_id, v.chapter, v.verse FROM verses_fts f JOIN verses v ON v.rowid = f.rowid
+                 WHERE verses_fts MATCH ?1 ORDER BY v.book_id, v.chapter, v.verse LIMIT 500000",
+            )
+            .map_err(err)?;
+        let rows = stmt.query_map(params![fts], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// The words of one verse as printed, by position.
+    pub fn verse_words(&self, book: u8, chapter: u16, verse: u16) -> Result<Vec<(u32, String)>, String> {
+        if !self.has_table("words")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .db
+            .prepare_cached("SELECT position, text FROM words WHERE book_id = ?1 AND chapter = ?2 AND verse = ?3 ORDER BY position")
+            .map_err(err)?;
+        let rows = stmt.query_map(params![book, chapter, verse], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
     }
 
     /// Sections of a book under a parent, or at the top with `None`.
@@ -870,6 +1208,19 @@ mod tests {
         assert_eq!(at[0].targets[0], (r("Prov.8.22"), r("Prov.8.24")));
         assert_eq!(m.entry_count().unwrap(), 3);
         assert_eq!(m.manifest.books_present, 1);
+    }
+
+    #[test]
+    fn a_view_in_place_of_a_table_is_refused() {
+        let entry = |key: &str| EntryContent { key: key.into(), title: key.into(), body: "<p>x</p>".into(), ..Default::default() };
+        let (dir, _) = written("dictionary", vec![entry("A")], vec![]);
+        let path = dir.path().join("TST.grtb");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch("ALTER TABLE links RENAME TO old_links; CREATE VIEW links AS SELECT * FROM old_links;").unwrap();
+        }
+        let error = Module::open(&path).err().unwrap();
+        assert!(error.contains("view"), "{error}");
     }
 
     #[test]

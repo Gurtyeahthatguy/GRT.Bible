@@ -45,6 +45,9 @@ jobs:
       - name: No-trace check
         run: ./scripts/check-build.sh target/release/grt-bible
 
+      - name: Weight
+        run: ./scripts/check-weight.sh
+
       - uses: actions/upload-artifact@v7
         with:
           name: grt-bible-linux

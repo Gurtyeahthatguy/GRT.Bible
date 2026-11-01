@@ -25,6 +25,8 @@ export const DEFAULTS = {
   searchScope: 'module',
   library: { tab: 'passage', commentary: null, dictionary: null, book: null },
   print: { paper: 'a4', size: 11, numbers: true, headings: true, editionNotes: false, myNotes: false },
+  interlinear: false,
+  original: { greekAccents: true, hebrewPoints: true, hebrewAccents: true },
 };
 
 export const PAPERS = {
@@ -61,7 +63,7 @@ export function normalise(raw = {}) {
   if (typeof raw.panel === 'string' || raw.panel === null) s.panel = raw.panel ?? null;
   if (raw.searchScope === 'module' || raw.searchScope === 'all') s.searchScope = raw.searchScope;
   if (raw.library && typeof raw.library === 'object') {
-    if (['passage', 'dictionary', 'books', 'installed'].includes(raw.library.tab)) s.library.tab = raw.library.tab;
+    if (['passage', 'word', 'dictionary', 'books', 'installed'].includes(raw.library.tab)) s.library.tab = raw.library.tab;
     for (const key of ['commentary', 'dictionary', 'book']) {
       if (typeof raw.library[key] === 'string') s.library[key] = raw.library[key];
     }
@@ -71,6 +73,12 @@ export function normalise(raw = {}) {
     if (Number.isFinite(raw.print.size)) s.print.size = clamp(Math.round(raw.print.size), 8, 16);
     for (const key of ['numbers', 'headings', 'editionNotes', 'myNotes']) {
       if (typeof raw.print[key] === 'boolean') s.print[key] = raw.print[key];
+    }
+  }
+  if (typeof raw.interlinear === 'boolean') s.interlinear = raw.interlinear;
+  if (raw.original && typeof raw.original === 'object') {
+    for (const key of ['greekAccents', 'hebrewPoints', 'hebrewAccents']) {
+      if (typeof raw.original[key] === 'boolean') s.original[key] = raw.original[key];
     }
   }
   return s;

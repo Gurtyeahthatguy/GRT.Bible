@@ -25,6 +25,8 @@ function fakeBackend() {
     { kind: 'crossrefs', abbreviation: 'TSK', title: 'Treasury', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
       books: [], summary: '3 groups of references', missingBooks: [], license: 'Public Domain', source: 'SWORD module TSK, version 1.4',
       fileName: 'TSK.grtb', origin: { file: 'TSK.grtb', installed: '2026-10-27' } },
+    { kind: 'bible', abbreviation: 'SBL', title: 'Greek', language: 'grc', direction: 'ltr', versification: 'hebrew', bundled: false, words: true,
+      books: [{ index: 50, osis: 'John', name: 'Ioannes', abbrev: 'Io', chapters: 21 }], summary: '', missingBooks: [], license: 'CC BY 4.0', source: '', fileName: 'SBL.grtb', origin: null },
     { kind: 'commentary', abbreviation: 'MHC', title: 'Matthew Henry', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
       books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'MHC.grtb', origin: null },
     { kind: 'dictionary', abbreviation: 'EAS', title: 'Easton', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
@@ -104,6 +106,16 @@ function fakeBackend() {
       case 'entry': return { id: args.id, parent: null, key: 'AARON', title: 'AARON', body: '<p>Brother of <a data-key="MOSES">Moses</a>.</p>', spans: [] };
       case 'entry_by_key': return { id: 9, parent: null, key: args.key, title: args.key, body: '<p>The lawgiver.</p>', spans: [] };
       case 'guide': return '# Installing modules\n\nStep by step.';
+      case 'chapter_words': return [1, 2, 3, 4].flatMap((v) => [
+        { verse: v, position: 1, text: 'ἠγάπησεν', lemma: 'ἀγαπάω', strong: 'G25', gloss: 'I love', xlit: '', features: 'V3AAI-S---', parsing: 'verb, aorist', original: false },
+        { verse: v, position: 2, text: 'ὁ', lemma: 'ὁ', strong: 'G3588', gloss: 'the', xlit: '', features: 'T----NSM--', parsing: 'article', original: false },
+      ]);
+      case 'word_study': return {
+        module: args.module, lemma: 'ἀγαπάω', strong: args.strong, gloss: 'I love', xlit: '', total: 2,
+        books: [['John', 2]], forms: [['ἠγάπησεν', 2]],
+        lexicon: [{ module: 'EAS', title: 'Easton', entry: { id: 1, parent: null, key: 'AGAPAO', title: 'AGAPAO', body: '<p>to love</p>', spans: [] } }],
+        occurrences: [{ book: 'John', chapter: 3, verse: 16, text: 'ἠγάπησεν', parsing: 'verb, aorist' }],
+      };
       case 'user_save': saved.user = structuredClone(args.data); return null;
       case 'settings_save': saved.settings = structuredClone(args.settings); return null;
       default: return null;
@@ -276,7 +288,7 @@ describe('the interface', () => {
     await wait(120);
     const panel = document.querySelector('#panel');
     expect(panel.querySelector('.panel-head h2').textContent).toBe('Library');
-    expect([...panel.querySelectorAll('.tabs button')].map((b) => b.textContent)).toEqual(['This passage', 'Dictionary', 'Installed']);
+    expect([...panel.querySelectorAll('.tabs button')].map((b) => b.textContent)).toEqual(['This passage', 'Word', 'Dictionary', 'Installed']);
     const group = panel.querySelector('.group');
     expect(group.querySelector('b').textContent).toBe('beginning ');
     const refs = [...group.querySelectorAll('.ref')];
@@ -312,7 +324,7 @@ describe('the interface', () => {
     [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Installed').click();
     await wait(60);
     const heads = [...panel.querySelectorAll('.kind-head')].map((h) => h.textContent);
-    expect(heads).toEqual(['Bibles (2)', 'Commentaries (1)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
+    expect(heads).toEqual(['Bibles (3)', 'Commentaries (1)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
     const tsk = panel.querySelector('.card.module[data-module="TSK"]');
     expect(tsk.textContent).toContain('Licence: Public Domain');
     expect(tsk.textContent).toContain('Installed from TSK.grtb on 2026-10-27.');
@@ -357,6 +369,66 @@ describe('the interface', () => {
     picker.value = 'l1';
     picker.dispatchEvent(new Event('change'));
     expect(user.video_lists[0].videos).toEqual(['v0']);
+  });
+
+  it('opens a translation that lacks the book at its first book', async () => {
+    document.querySelector('#module-picker').value = 'SBL';
+    document.querySelector('#module-picker').dispatchEvent(new Event('change'));
+    await wait(80);
+    expect(document.querySelector('#module-picker').value).toBe('SBL');
+    expect(document.querySelector('#btn-location').textContent).toBe('Ioannes 1');
+    expect(document.querySelector('#toast').textContent).toMatch(/does not contain/);
+  });
+
+  it('reads a chapter word by word and studies a word', async () => {
+    document.querySelector('#module-picker').value = 'SBL';
+    document.querySelector('#module-picker').dispatchEvent(new Event('change'));
+    await wait(80);
+    const words = document.querySelector('#btn-words');
+    expect(words.hidden).toBe(false);
+    words.click();
+    await wait(80);
+    const cell = document.querySelector('#reader .iword');
+    expect(cell.querySelector('.w-text').textContent).toBe('ἠγάπησεν');
+    expect(cell.querySelector('.w-xlit').textContent).toBe('ēgapēsen');
+    expect(cell.querySelector('.w-morph').textContent).toBe('verb aor act ind 3s');
+    cell.click();
+    await wait(80);
+    const panel = document.querySelector('#panel');
+    expect(panel.querySelector('.word-lemma').textContent).toBe('ἀγαπάω');
+    expect(panel.textContent).toContain('2 occurrences in SBL');
+    expect(panel.querySelector('.entry').textContent).toBe('to love');
+    [...panel.querySelectorAll('button')].find((b) => b.textContent === 'Find every occurrence').click();
+    await wait(80);
+    expect(backend.calls.filter((c) => c.command === 'search').pop().args.query).toBe('G25');
+    expect(document.querySelectorAll('#reader .iword').length).toBe(8);
+    words.click();
+    await wait(80);
+    expect(document.querySelector('#reader .iword')).toBeNull();
+    document.querySelector('#module-picker').value = 'AAA';
+    document.querySelector('#module-picker').dispatchEvent(new Event('change'));
+    await wait(80);
+  });
+
+  it('searches within results and keeps a search', async () => {
+    document.querySelector('#btn-search').click();
+    await wait();
+    if (!document.querySelector('.search-input')) document.querySelector('#btn-search').click();
+    await wait();
+    const input = document.querySelector('.search-input');
+    input.value = 'luce';
+    key(input, 'Enter');
+    await wait(60);
+    const within = [...document.querySelectorAll('.search-form .check')].find((l) => l.textContent.includes('Within'));
+    within.querySelector('input').checked = true;
+    input.value = 'perche';
+    key(input, 'Enter');
+    await wait(60);
+    expect(backend.calls.filter((c) => c.command === 'search').pop().args.query).toBe('(luce) AND (perche)');
+    [...document.querySelectorAll('.search-form button')].find((b) => b.textContent === 'Save').click();
+    await wait();
+    expect(app.ctx.user().saved_searches.map((x) => x.query)).toEqual(['(luce) AND (perche)']);
+    expect(document.querySelector('.saved-searches').textContent).toContain('(luce) AND (perche)');
   });
 
   it('keeps preferences between sessions', () => {

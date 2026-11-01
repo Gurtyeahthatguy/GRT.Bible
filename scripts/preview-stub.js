@@ -4,6 +4,7 @@
   const packs = window.__PREVIEW_PACKS__ || [];
   const modules = data.map((m) => ({
     kind: 'bible',
+    words: Object.values(m.chapters).some((c) => c.words?.length),
     fileName: `${m.meta.abbreviation}.grtb`,
     origin: null,
     features: [],
@@ -159,6 +160,27 @@
     guide: () => window.__PREVIEW_GUIDE__ || '# No guide',
     save_text: () => undefined,
     print_page: () => { throw new Error('no native printing'); },
+    chapter_words: ({ module, book, chapter }) => byAbbr.get(module).chapters[`${book}.${chapter}`]?.words || [],
+    word_study: ({ module, strong, lemma }) => {
+      const found = [];
+      for (const [key, ch] of Object.entries(byAbbr.get(module).chapters)) {
+        const [book, chapter] = key.split('.');
+        for (const w of ch.words || []) {
+          if ((strong && w.strong === strong) || (!strong && w.lemma === lemma)) found.push({ book, chapter: Number(chapter), verse: w.verse, text: w.text, parsing: '', w });
+        }
+      }
+      const books = [];
+      for (const o of found) {
+        if (books.length && books[books.length - 1][0] === o.book) books[books.length - 1][1] += 1;
+        else books.push([o.book, 1]);
+      }
+      const first = found[0]?.w || {};
+      const lexicon = packs.filter((p) => p.meta.kind === 'dictionary').map((p) => {
+        const e = p.entries.find((x) => x.key.toLowerCase() === lemma.toLowerCase()) || p.entries[0];
+        return e ? { module: p.meta.abbreviation, title: p.meta.title, entry: entryRow(p, e) } : null;
+      }).filter(Boolean).slice(0, 2);
+      return { module, lemma: first.lemma || lemma, strong: first.strong || strong, gloss: first.gloss || '', xlit: first.xlit || '', total: found.length, books, forms: [], lexicon, occurrences: found };
+    },
     passage: ({ module, first, last }) => {
       const out = [];
       for (const [key, ch] of Object.entries(byAbbr.get(module).chapters)) {

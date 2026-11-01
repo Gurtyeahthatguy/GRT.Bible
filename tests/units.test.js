@@ -5,7 +5,8 @@ import { describe, it, expect } from 'vitest';
 import { copyHtml, copyText } from '../src/js/copy.js';
 import { markTerms } from '../src/js/dom.js';
 import { renderGuide } from '../src/js/guide.js';
-import { libraryTabs } from '../src/js/library.js';
+import { libraryTabs, occurrencesCsv } from '../src/js/library.js';
+import { shaper, shortParsing, transliterateGreek } from '../src/js/original.js';
 import { renderMarkup, splitRange } from '../src/js/markup.js';
 import { textArea } from '../src/js/print.js';
 import { notesMarkdown } from '../src/js/study.js';
@@ -204,5 +205,36 @@ describe('the library and videos', () => {
     expect(s.library).toEqual({ tab: 'books', commentary: 'MHC', dictionary: null, book: null });
     expect(s.print).toMatchObject({ paper: 'a4', size: 16, myNotes: true, numbers: true });
     expect(textArea('a5')).toMatchObject({ width: 112, height: 162 });
+  });
+});
+
+describe('Greek and Hebrew', () => {
+  it('transliterates Greek as the SBL Handbook does', () => {
+    const words = ['ἠγάπησεν', 'ὁ', 'υἱὸν', 'οὗτος', 'ῥῆμα', 'ἄγγελος', 'Ἰησοῦ', 'τῷ', 'εὐαγγέλιον'];
+    expect(words.map(transliterateGreek)).toEqual(['ēgapēsen', 'ho', 'huion', 'houtos', 'rhēma', 'angelos', 'Iēsou', 'tōi', 'euangelion']);
+  });
+
+  it('turns accents, points and cantillation off on request', () => {
+    expect(shaper('grc', { greekAccents: false })('ἠγάπησεν ὁ θεὸς')).toBe('ηγαπησεν ο θεος');
+    expect(shaper('hbo', { hebrewPoints: false })('בְּרֵאשִׁ֖ית בָּרָ֣א')).toBe('בראשית ברא');
+    expect(shaper('hbo', { hebrewAccents: false })('בְּרֵאשִׁ֖ית')).toBe('בְּרֵאשִׁית');
+    expect(shaper('la', { greekAccents: false })('Dóminus')).toBe('Dóminus');
+  });
+
+  it('writes the morphology short', () => {
+    expect(shortParsing('V3AAI-S---')).toBe('verb aor act ind 3s');
+    expect(shortParsing('V3p-I-SM-q', true)).toBe('verb qal perf 3ms');
+    expect(shortParsing('N----ASM--')).toBe('noun acc ms');
+    expect(shortParsing('')).toBe('');
+  });
+
+  it('exports the occurrences of a word as CSV for Grid', () => {
+    const study = { lemma: 'ἀγαπάω', strong: 'G25', occurrences: [{ book: 'John', chapter: 3, verse: 16, text: 'ἠγάπησεν', parsing: 'verb, aorist' }] };
+    expect(occurrencesCsv(study, (o) => `Gv ${o.chapter},${o.verse}`)).toBe(
+      'Reference,Book,Chapter,Verse,Form,Parsing,Lemma,Strong\n"Gv 3,16",John,3,16,ἠγάπησεν,"verb, aorist",ἀγαπάω,G25\n');
+  });
+
+  it('shows the word tab only when a module has words', () => {
+    expect(libraryTabs([{ kind: 'bible', words: true }]).map((t) => t.id)).toEqual(['passage', 'word', 'installed']);
   });
 });

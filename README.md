@@ -5,10 +5,14 @@ A Bible reader for the 73-book Catholic canon that runs on your own computer.
 - **Offline.** Reading, search, parallel reading, notes and highlights need no
   network.
 - **Nothing social.** No account, no sharing, no reading plans, no streaks.
-- **Public domain texts only.** Other translations can be imported from files
-  you already have.
+- **Public domain texts inside.** Other translations can be imported from files
+  you already have; study packs published beside the program say their own
+  licence.
 - **Study material from files.** Commentaries, cross-references, dictionaries
   and books install from a file, and appear beside the verse you are reading.
+- **Greek and Hebrew word by word.** With the original-language packs, every
+  word shows its lemma, transliteration, gloss, morphology and Strong's number,
+  and every lemma can be studied and searched.
 - **Your data is one file.** Position, history, notes, highlights, bookmarks,
   saved videos and video lists live in a single `.grt` file you can copy
   anywhere.
@@ -57,9 +61,21 @@ Books a translation lacks are listed, greyed out, not hidden.
 
 Attached to each release as separate files, installed from the library:
 
-| File | Kind | Source |
-|---|---|---|
-| `TSK.grtb` | Cross-references: the Treasury of Scripture Knowledge, 66,726 groups | CrossWire SWORD module `TSK` 1.4, public domain |
+| File | Kind | Source | Licence |
+|---|---|---|---|
+| `TSK.grtb` | Cross-references: the Treasury of Scripture Knowledge, 66,726 groups | CrossWire SWORD module `TSK` 1.4 | Public domain |
+| `SBLGNT.grtb` | The SBL Greek New Testament, every word with lemma, gloss, morphology and Strong's number | `morphgnt/sblgnt` and `morphgnt/morphological-lexicon` | Text CC BY 4.0, Society of Biblical Literature and Logos Bible Software; parsing CC BY-SA 3.0, MorphGNT |
+| `OSHB.grtb` | The Westminster Leningrad Codex, every word with lemma, transliteration, gloss, morphology and Strong's number | `openscriptures/morphhb` | Text public domain; lemmas and morphology CC BY 4.0, Open Scriptures Hebrew Bible Project |
+| `BDB.grtb` | Brown-Driver-Briggs, Hebrew and English lexicon, 11,845 entries | `openscriptures/HebrewLexicon` | Text public domain; transcription CC BY 4.0, Open Scriptures Hebrew Bible Project |
+| `STRONGG.grtb`, `STRONGH.grtb` | Strong's Greek and Hebrew dictionaries | CrossWire `StrongsGreek` 2.0, `StrongsHebrew` 1.2 | Public domain |
+| `ABBOTT.grtb` | Abbott-Smith, Manual Greek Lexicon of the New Testament | CrossWire `AbbottSmith` 4.1 | Public domain |
+
+The program and the eight translations inside it are MIT and public domain.
+The packs are separate files; three of them carry Creative Commons licences,
+which ask that their authors be named, and `SBLGNT.grtb` is shared under the
+same licence as its parsing. Each module states its licence, and the library
+shows it. The exact commits the packs were built from are listed in
+`scripts/convert-packs.sh`.
 
 [MODULES.md](MODULES.md) explains, step by step, how to install these and any
 SWORD or USFM module on Linux, Windows and Android.
@@ -113,7 +129,23 @@ reference.
 **Compare** puts up to four translations side by side, aligned verse by verse.
 
 **Search** matches words without regard to case, accents, Greek breathings or
-Hebrew points. Quotes keep a phrase together.
+Hebrew points. Quotes keep a phrase together. In a module with tagged words it
+also finds `G25` or `H7225` by Strong's number, `lemma:ἀγαπάω` in every form,
+and `morph:"aorist imperative"` or `morph:qal,perfect` by form; `+` puts two
+conditions on one word, `lemma:ἀγαπάω+morph:imperative`. `AND`, `OR`, `NOT`,
+parentheses and `G25 NEAR/3 G2316` combine them. A search can run within the
+results of the last one, and kept searches are saved in your `.grt` file.
+
+**Words** appears in the toolbar for a module with tagged words: SBLGNT, OSHB,
+or a SWORD Bible with Strong's numbers such as the KJV. It shows the chapter
+word by word, with the lemma, its transliteration, a gloss, the morphology and
+Strong's number under each word. For a translation, the lemma comes from an
+installed original-language pack. Clicking a word opens it in the library:
+every occurrence counted by book, its forms, what each installed lexicon says,
+and an export of the occurrences that GRT Grid opens with Import CSV.
+
+Greek accents and breathings, Hebrew vowel points and cantillation marks can
+each be turned off in Settings.
 
 **Study** holds the verse of the day, your notes, highlights, bookmarks and
 history. The file is `user.grt` in the program's data folder; Settings exports
@@ -237,15 +269,25 @@ reads the package a phone would get: the permissions it asks for, which should b
 none, and its library the same way.
 
 ```bash
+./scripts/check-weight.sh
+```
+
+checks the binary, the packages built here and each study pack against
+[scripts/weight-budget.txt](scripts/weight-budget.txt), then opens every module
+and reads from each, and checks the time and memory that took.
+
+```bash
 cargo test --workspace
 npm test
 ./scripts/preview.sh
 ```
 
-150 tests cover the reference parser, the versification tables, the module and
-user file formats, the SWORD readers for every kind of module, markup that
-tries to smuggle in scripts, and the interface running against a stubbed
-backend. The preview serves the real interface in a browser, with a few
+178 tests cover the reference parser, the versification tables, the module and
+user file formats, the SWORD readers for every kind of module, the morphology
+codes and the search grammar, archives and markup built to break the importer,
+and the interface running against a stubbed backend. One of them counts forms
+straight from the MorphGNT files and checks that a morphological search over
+`SBLGNT.grtb` finds the same number. The preview serves the real interface in a browser, with a few
 chapters of every module and of the study packs, so it can be looked at
 without building.
 
@@ -261,7 +303,12 @@ without building.
 - A note, a highlight and a bookmark belong to a verse, not to a phrase inside
   it.
 - Search covers the translations, not commentaries, dictionaries or books.
-- Strong's numbers kept from an imported SWORD Bible are not shown yet.
+- The Hebrew text shows the qere where a word is written one way and read
+  another; the ketiv is not shown.
+- Thayer's Greek lexicon is not among the packs: CrossWire does not publish it.
+  Abbott-Smith and Strong's cover the same ground.
+- Hebrew glosses come from the lexical index of the Open Scriptures project and
+  are short: Brown-Driver-Briggs has the full entry.
 - The video catalog is sorted by reading titles, so a video sits in the wrong
   category until someone corrects it.
 
@@ -270,4 +317,4 @@ without building.
 MIT. See [LICENSE](LICENSE). The texts are in the public domain. The
 versification data derived from Paratext is MIT, United Bible Societies; the
 chapter and verse counts the SWORD importer needs were read from CrossWire's
-canon tables. The Treasury of Scripture Knowledge is in the public domain.
+canon tables. The study packs' licences are listed under Study packs.

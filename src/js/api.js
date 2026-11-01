@@ -44,6 +44,8 @@ export const api = {
   moduleReport: (module) => invoke('module_report', { module }),
   installModule: (path) => invoke('module_install', { path }),
   passage: (module, first, last) => invoke('passage', { module, first, last }),
+  chapterWords: (module, book, chapter) => invoke('chapter_words', { module, book, chapter }),
+  wordStudy: (module, strong, lemma, gloss = '') => invoke('word_study', { module, strong, lemma, gloss }),
   commentary: (module, at) => invoke('commentary', { module, at }),
   commentaryStep: (module, at, forward) => invoke('commentary_step', { module, at, forward }),
   crossrefs: (at) => invoke('crossrefs', { at }),

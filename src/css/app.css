@@ -585,6 +585,11 @@ kbd {
 .more { width: 100%; margin-top: 8px; }
 
 .search-form select { max-width: 100%; }
+.search-help { margin: 2px 0 8px; font-size: 12px; }
+.search-help summary { cursor: pointer; color: var(--text-dim); }
+.search-help ul { padding-left: 1.2em; margin: 4px 0; }
+.search-help code { font-size: 12px; }
+.saved-searches { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .channels { margin: 4px 0 10px; }
 .channels summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .channels ul { list-style: none; margin: 4px 0 0; padding: 0; }
@@ -766,6 +771,37 @@ kbd {
 .trail { font-size: 12px; margin: 8px 0 4px; }
 .kind-head { font-size: 13px; margin: 18px 0 8px; color: var(--text-dim); }
 .card.module p { margin: 2px 0; }
+
+/* Word by word */
+
+.interlinear .iverse { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 4px; margin: 0 0 1em; }
+.interlinear .iverse .vn { align-self: flex-start; margin-top: 0.3em; }
+.iword {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.iword.plain { cursor: default; }
+@media (hover: hover) { .iword:not(.plain):hover { border-color: var(--border); background: var(--bg-sunken); } }
+.iword .w-text { font-family: var(--reading-font); }
+.iword .w-lemma { font-family: var(--reading-font); font-size: 0.72em; color: var(--accent); }
+.iword .w-xlit, .iword .w-gloss, .iword .w-morph, .iword .w-strong { font-family: var(--ui-font); font-size: 11px; color: var(--text-dim); max-width: 11em; text-align: center; }
+.iword .w-xlit { font-style: italic; }
+.iword .w-strong { font-size: 10px; }
+.word-head h3.word-lemma { font-family: var(--reading-font); font-size: 26px; margin: 4px 0; }
+.word-head p { margin: 2px 0; }
+.bars { list-style: none; margin: 4px 0 8px; padding: 0; }
+.bars li { display: grid; grid-template-columns: 7em 1fr 3em; align-items: center; gap: 6px; font-size: 12px; padding: 1px 0; }
+.bars .bar { height: 8px; border-radius: 4px; background: var(--accent); opacity: 0.6; }
+.bars .bar-count { text-align: end; color: var(--text-dim); }
 
 .guide { font-size: 14px; line-height: 1.55; }
 .guide h2 { font-size: 18px; }

@@ -5,6 +5,8 @@ import { h } from './dom.js';
 const BLOCKS = new Set(['p', 'h4']);
 const INLINE = new Set(['b', 'i', 'sup']);
 const SKIPPED = new Set(['script', 'style', 'template', 'svg', 'math', 'iframe', 'object']);
+/** Deeper than this, elements keep their words and lose their shape. */
+const DEPTH = 40;
 const RANGE = /^[1-3]?[A-Za-z]+\.\d+\.\d+(-[1-3]?[A-Za-z]+\.\d+\.\d+)?$/;
 
 /** The parts of a stored range: `Gen.1.1-Gen.1.3` into start and end. */
@@ -14,7 +16,7 @@ export function splitRange(text) {
   return { start, end: end || start };
 }
 
-function walk(node, handlers, out) {
+function walk(node, handlers, out, depth = 0) {
   for (const child of node.childNodes) {
     if (child.nodeType === 3) {
       out.append(child.nodeValue);
@@ -23,6 +25,10 @@ function walk(node, handlers, out) {
     if (child.nodeType !== 1) continue;
     const tag = child.nodeName.toLowerCase();
     if (SKIPPED.has(tag)) continue;
+    if (depth >= DEPTH) {
+      out.append(child.textContent);
+      continue;
+    }
     if (tag === 'br') {
       out.append(h('br'));
       continue;
@@ -42,7 +48,7 @@ function walk(node, handlers, out) {
       target.addEventListener('click', () => handlers.onKey?.(key, target));
     }
     // Anything else keeps its words and loses its element.
-    walk(child, handlers, target || out);
+    walk(child, handlers, target || out, depth + 1);
     if (target) out.append(target);
   }
 }

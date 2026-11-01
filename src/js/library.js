@@ -1,14 +1,16 @@
 /** The library: what the installed material says about a passage, dictionaries, books, and the modules themselves. */
 
-import { api, ask, onAndroid, pickFile, pickFolder } from './api.js';
+import { api, ask, onAndroid, pickFile, pickFolder, pickSave } from './api.js';
 import { clear, h, withBreaks } from './dom.js';
 import { openGuide } from './guide.js';
 import { renderMarkup, splitRange } from './markup.js';
+import { isGreek, isHebrew, transliterateGreek } from './original.js';
 import { closeOverlay, openOverlay, toast } from './overlay.js';
 import { formatReference, splitOsis } from './reference.js';
 
 export const LIBRARY_TABS = [
   { id: 'passage', label: 'This passage' },
+  { id: 'word', label: 'Word', words: true },
   { id: 'dictionary', label: 'Dictionary', kind: 'dictionary' },
   { id: 'books', label: 'Books', kind: 'book' },
   { id: 'installed', label: 'Installed' },
@@ -45,7 +47,7 @@ function empty(text) {
 
 /** Tabs worth showing: a dictionary tab only with a dictionary installed, and so on. */
 export function libraryTabs(modules) {
-  return LIBRARY_TABS.filter((t) => !t.kind || modules.some((m) => m.kind === t.kind));
+  return LIBRARY_TABS.filter((t) => (!t.kind || modules.some((m) => m.kind === t.kind)) && (!t.words || modules.some((m) => m.words)));
 }
 
 /** Labels for internal ranges in the reader's translation, such as "Gv 3,16-18". */
@@ -202,6 +204,75 @@ async function passageTab(container, ctx) {
   container.append(h('p', { class: 'lib-focus' }, h('strong', {}, label),
     h('span', { class: 'fine' }, ctx.hasSelection() ? ' · the selected verse' : ' · the first verse in view, or select one')));
   container.append(await crossReferences(ctx, at), await commentarySection(ctx, at));
+}
+
+// Word
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Every occurrence as rows Grid opens: reference, form, parsing, lemma and number. */
+export function occurrencesCsv(study, label) {
+  const rows = [['Reference', 'Book', 'Chapter', 'Verse', 'Form', 'Parsing', 'Lemma', 'Strong']];
+  for (const o of study.occurrences) {
+    rows.push([label(o), o.book, o.chapter, o.verse, o.text, o.parsing, study.lemma, study.strong]);
+  }
+  return `${rows.map((r) => r.map(csvCell).join(',')).join('\n')}\n`;
+}
+
+async function wordTab(container, ctx) {
+  const focus = ctx.wordFocus();
+  if (!focus) {
+    container.append(empty('Turn on Words in the toolbar, with SBLGNT, OSHB or a translation tagged with Strong\'s numbers, and choose a word to study it.'));
+    return;
+  }
+  const study = await api.wordStudy(focus.module, focus.strong, focus.lemma, focus.gloss || '');
+  const module = ctx.modules().find((m) => m.abbreviation === study.module);
+  const language = study.strong.startsWith('H') ? 'hbo' : study.strong.startsWith('G') ? 'grc' : module?.language;
+  const xlit = study.xlit || (isGreek(language) ? transliterateGreek(study.lemma) : '');
+  const label = (o) => {
+    const own = module?.books.find((b) => b.osis === o.book);
+    return formatReference(module?.language || 'en', o.book, o.chapter, o.verse, o.chapter, o.verse, own?.abbrev);
+  };
+  const most = Math.max(1, ...study.books.map(([, n]) => n));
+  const exportButton = h('button', {
+    type: 'button',
+    onclick: async () => {
+      const path = await pickSave('Export the occurrences', `${study.strong || 'word'} ${study.module}.csv`, [{ name: 'CSV for GRT Grid', extensions: ['csv'] }]);
+      if (!path) return;
+      try {
+        await api.saveText(path, occurrencesCsv(study, label));
+        toast(`${study.total} occurrences exported; GRT Grid opens them with Import CSV.`, 6000);
+      } catch (error) {
+        toast(String(error), 5000);
+      }
+    },
+  }, 'Export for Grid…');
+  const query = study.strong ? study.strong : `lemma:${study.lemma}`;
+  container.append(
+    h('header', { class: 'word-head' },
+      h('h3', { class: 'word-lemma', lang: language, dir: isHebrew(language) ? 'rtl' : 'ltr' }, study.lemma || focus.form),
+      h('p', {}, [xlit ? h('i', {}, xlit) : null, study.strong ? ` · ${study.strong}` : null, study.gloss ? ` · ${study.gloss}` : null]),
+      focus.form ? h('p', { class: 'fine' }, `${focus.form}${focus.parsing ? `: ${focus.parsing}` : ''}`) : null),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: () => ctx.search(query) }, 'Find every occurrence'),
+      study.total ? exportButton : null),
+    h('section', { class: 'lib-section' },
+      h('h3', {}, `${study.total} ${study.total === 1 ? 'occurrence' : 'occurrences'} in ${study.module}`),
+      h('ul', { class: 'bars' }, study.books.map(([book, n]) => h('li', {},
+        h('span', { class: 'bar-label' }, ctx.bookName(book)),
+        h('span', { class: 'bar', style: `width: ${Math.round((n / most) * 100)}%` }),
+        h('span', { class: 'bar-count' }, String(n))))),
+      study.forms.length ? h('details', {}, h('summary', {}, `Forms (${study.forms.length})`),
+        h('p', { lang: language, dir: isHebrew(language) ? 'rtl' : 'ltr' }, study.forms.map(([form, n]) => [h('span', { class: 'tag' }, `${form} ${n}`), ' ']))) : null),
+    h('section', { class: 'lib-section' },
+      h('h3', {}, 'Lexicons'),
+      study.lexicon.length
+        ? study.lexicon.map((l, i) => h('details', { open: i === 0 }, h('summary', {}, `${l.module} · ${l.title}`),
+          h('article', { class: 'entry' }, renderMarkup(l.entry.body, handlersFor(ctx, l.module)))))
+        : h('p', { class: 'fine' }, 'No installed lexicon has this word. Strong\'s dictionaries, Abbott-Smith and Brown-Driver-Briggs are published beside each release.')));
 }
 
 // Dictionary
@@ -383,7 +454,7 @@ function installedTab(container, ctx) {
   draw();
 }
 
-const RENDERERS = { passage: passageTab, dictionary: dictionaryTab, books: booksTab, installed: installedTab };
+const RENDERERS = { passage: passageTab, word: wordTab, dictionary: dictionaryTab, books: booksTab, installed: installedTab };
 
 export async function renderLibrary(container, tab, ctx, options = {}) {
   const renderer = RENDERERS[tab] || passageTab;

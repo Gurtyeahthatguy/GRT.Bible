@@ -15,6 +15,42 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Archives larger than these are refused before anything is read from them.
+pub const ARCHIVE_ENTRIES: usize = 20_000;
+pub const ARCHIVE_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
+pub const ARCHIVE_ENTRY: u64 = 512 * 1024 * 1024;
+/// No honest module text compresses better than this.
+const ARCHIVE_RATIO: u64 = 200;
+
+/// Opens a ZIP that came from elsewhere, refusing what no module needs: too many
+/// files, names that climb out of the archive, and contents that expand too far.
+pub fn open_archive(bytes: Vec<u8>) -> Result<zip::ZipArchive<std::io::Cursor<Vec<u8>>>, String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("not a readable ZIP: {e}"))?;
+    if archive.len() > ARCHIVE_ENTRIES {
+        return Err(format!("the archive holds {} files, more than any module", archive.len()));
+    }
+    let mut total = 0u64;
+    for i in 0..archive.len() {
+        let entry = archive.by_index_raw(i).map_err(|e| format!("not a readable ZIP: {e}"))?;
+        let name = entry.name().replace('\\', "/");
+        if name.starts_with('/') || name.split('/').any(|part| part == "..") || name.contains(':') {
+            return Err(format!("the archive names a file outside itself: {name}"));
+        }
+        let size = entry.size();
+        if size > ARCHIVE_ENTRY {
+            return Err(format!("{name} would expand to {size} bytes, more than any module file"));
+        }
+        if size > 16 * 1024 * 1024 && size / entry.compressed_size().max(1) > ARCHIVE_RATIO {
+            return Err(format!("{name} expands {} times, which no module text does", size / entry.compressed_size().max(1)));
+        }
+        total += size;
+    }
+    if total > ARCHIVE_TOTAL {
+        return Err("the archive would expand past 2 GB".into());
+    }
+    Ok(archive)
+}
+
 /// Text from bytes that are normally UTF-8 and occasionally Latin-1.
 pub fn decode(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
@@ -61,13 +97,13 @@ pub fn read_usfm(path: &Path) -> Result<Loaded, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         hash = sha256_hex(&bytes);
         if bytes.starts_with(b"PK") {
-            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+            let mut archive = open_archive(bytes)?;
             let mut names: Vec<String> = archive.file_names().filter(|n| is_usfm_name(n)).map(str::to_string).collect();
             names.sort();
             for name in names {
-                let mut entry = archive.by_name(&name).map_err(|e| e.to_string())?;
+                let entry = archive.by_name(&name).map_err(|e| e.to_string())?;
                 let mut data = Vec::new();
-                entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
+                entry.take(ARCHIVE_ENTRY).read_to_end(&mut data).map_err(|e| e.to_string())?;
                 files.push((name, data));
             }
         } else {
@@ -104,6 +140,9 @@ fn shift_chapters(mut body: BookContent, chapter: Option<u16>, offset: i32) -> B
     for t in &mut body.tagged {
         t.chapter = fix(t.chapter);
     }
+    for w in &mut body.words {
+        w.chapter = fix(w.chapter);
+    }
     body
 }
 
@@ -113,6 +152,7 @@ fn take_chapters(body: &BookContent, keep: impl Fn(u16) -> bool) -> BookContent 
         titles: body.titles.iter().filter(|t| keep(t.chapter)).cloned().collect(),
         notes: body.notes.iter().filter(|n| keep(n.chapter)).cloned().collect(),
         tagged: body.tagged.iter().filter(|t| keep(t.chapter)).cloned().collect(),
+        words: body.words.iter().filter(|w| keep(w.chapter)).cloned().collect(),
     }
 }
 
@@ -121,6 +161,7 @@ fn append(target: &mut BookContent, extra: BookContent) {
     target.titles.extend(extra.titles);
     target.notes.extend(extra.notes);
     target.tagged.extend(extra.tagged);
+    target.words.extend(extra.words);
 }
 
 /// Fits source books into the 73-book canon and its chapter layout.

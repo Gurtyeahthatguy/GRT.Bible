@@ -24,7 +24,12 @@ modules_dir, out = pathlib.Path(sys.argv[1]), sys.argv[2]
 pack_dirs = [pathlib.Path(p) for p in sys.argv[3:] if p]
 wanted = {'Gen': [1, 2, 3], 'Ps': [22, 23, 50, 51], 'Isa': [53], 'Matt': [5], 'John': [1, 3], 'Rom': [8]}
 data = []
-for path in sorted(modules_dir.glob('*.grtb')):
+bible_paths = sorted(modules_dir.glob('*.grtb'))
+for folder in pack_dirs:
+    for path in sorted(folder.glob('*.grtb')) if folder.is_dir() else []:
+        if dict(sqlite3.connect(f'file:{path}?mode=ro', uri=True).execute('select key, value from meta')).get('kind', 'bible') == 'bible':
+            bible_paths.append(path)
+for path in bible_paths:
     db = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
     meta = dict(db.execute('select key, value from meta'))
     books = [dict(index=i, osis=o, name=n, abbrev=a, chapters=c) for i, o, n, a, c in db.execute('select id, osis, name, abbrev, chapters from books order by position')]
@@ -36,7 +41,12 @@ for path in sorted(modules_dir.glob('*.grtb')):
             verses = [dict(verse=v, text=t, paragraph=bool(p)) for v, t, p in db.execute('select verse, text, paragraph from verses where book_id=? and chapter=? order by verse', (b['index'], c))]
             titles = [dict(chapter=c, verse=v, kind=k, text=t) for v, k, t in db.execute('select verse, kind, text from titles where book_id=? and chapter=?', (b['index'], c))]
             notes = [dict(chapter=c, verse=v, marker=m or '', text=t) for v, m, t in db.execute('select verse, marker, text from notes where book_id=? and chapter=?', (b['index'], c))]
-            chapters[f"{b['osis']}.{c}"] = dict(verses=verses, titles=titles, notes=notes)
+            has_words = db.execute("select 1 from sqlite_master where name='words'").fetchone()
+            words = [dict(verse=v, position=p, text=t, lemma=l or '', strong=g or '', gloss=gl or '', xlit=x or '', features=f or '', parsing='', original=False)
+                     for v, p, t, l, g, gl, x, f in db.execute("""select w.verse, w.position, w.text, l.lemma, l.strong, l.gloss, l.xlit, m.features
+                        from words w left join lemmas l on l.id = w.lemma left join morphs m on m.id = w.morph
+                        where w.book_id=? and w.chapter=? order by w.verse, w.position""", (b['index'], c))] if has_words else []
+            chapters[f"{b['osis']}.{c}"] = dict(verses=verses, titles=titles, notes=notes, words=words)
     data.append(dict(meta=meta, books=books, chapters=chapters))
 catalog = json.loads((modules_dir.parent / 'catalog' / 'catalog.json').read_text())
 videos = [dict(id=v['id'], title=v['title'], host='www.youtube.com', channel=v.get('channel', ''), category=v.get('category', ''),

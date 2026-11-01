@@ -144,6 +144,10 @@ fn search(state: Shared, query: String, modules: Vec<String>, books: Vec<String>
         modules.iter().map(|m| lib.bible(m)).collect::<Result<Vec<_>, _>>()?
     };
     let books = books.iter().map(|b| library::book_index(b)).collect::<Result<Vec<_>, _>>()?;
+    if grtb::query::is_advanced(&query) {
+        let node = grtb::query::parse(&query)?;
+        return library::advanced_search(&entries, &node, &books, offset, limit);
+    }
     library::search(&entries, &query, &books, offset, limit)
 }
 
@@ -152,6 +156,33 @@ fn search(state: Shared, query: String, modules: Vec<String>, books: Vec<String>
 fn passage(state: Shared, module: String, first: String, last: String) -> Result<Vec<library::PassageVerse>, String> {
     let entry = read_lock(&state.library).bible(&module)?;
     library::passage(&entry, parse_ref(&first)?, parse_ref(&last)?, 2000)
+}
+
+#[tauri::command]
+fn chapter_words(state: Shared, module: String, book: String, chapter: u16) -> Result<Vec<library::WordOut>, String> {
+    let lib = read_lock(&state.library);
+    let entry = lib.bible(&module)?;
+    let sources: Vec<_> = lib.bibles().into_iter().filter(|e| e.info.words && e.info.abbreviation != module).collect();
+    library::chapter_words(&entry, &book, chapter, &sources)
+}
+
+#[tauri::command]
+async fn word_study(app: AppHandle, module: String, strong: String, lemma: String, gloss: Option<String>) -> Result<library::WordStudy, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let lib = read_lock(&state.library);
+        let entry = lib.bible(&module)?;
+        // A translation tagged with Strong's numbers studies the lemma in an original-language module.
+        let entry = if entry.info.words && !lemma.is_empty() || strong.is_empty() {
+            entry
+        } else {
+            let original = lib.bibles().into_iter().find(|e| e.info.words && e.with(|m| m.find_lemmas(Some(&strong), None)).map(|v| !v.is_empty()).unwrap_or(false));
+            original.unwrap_or(entry)
+        };
+        library::word_study(&entry, &strong, &lemma, gloss.as_deref().unwrap_or(""), &lib.kind("dictionary"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -522,6 +553,8 @@ pub fn run() {
             module_install,
             module_remove,
             passage,
+            chapter_words,
+            word_study,
             commentary,
             commentary_step,
             crossrefs,

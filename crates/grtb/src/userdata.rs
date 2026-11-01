@@ -10,12 +10,13 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const SCHEME: &str = "hebrew";
 const HISTORY_LIMIT: usize = 100;
 
-const PARTS: [&str; 5] = [
+const PARTS: [&str; 6] = [
     "content/reading.json",
     "content/notes.json",
     "content/highlights.json",
     "content/bookmarks.json",
     "content/videos.json",
+    "content/searches.json",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,6 +79,15 @@ pub struct VideoAnchor {
     pub end: Ref,
 }
 
+/// A search the reader kept, to run again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedSearch {
+    pub id: String,
+    pub query: String,
+    #[serde(default)]
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserData {
     pub reading: Reading,
@@ -89,6 +99,8 @@ pub struct UserData {
     pub video_lists: Vec<VideoList>,
     #[serde(default)]
     pub video_anchors: Vec<VideoAnchor>,
+    #[serde(default)]
+    pub saved_searches: Vec<SavedSearch>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,6 +124,11 @@ struct HighlightsBody {
 #[derive(Serialize, Deserialize)]
 struct BookmarksBody {
     bookmarks: Vec<Bookmark>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SearchesBody {
+    searches: Vec<SavedSearch>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -158,6 +175,7 @@ impl UserData {
                 PARTS[4],
                 json(VideosBody { saved: self.saved_videos.clone(), lists: self.video_lists.clone(), anchors: self.video_anchors.clone() })?,
             ),
+            Entry::new(PARTS[5], json(SearchesBody { searches: self.saved_searches.clone() })?),
         ];
         write_archive(entries).map_err(|e| e.to_string())
     }
@@ -196,6 +214,7 @@ impl UserData {
             saved_videos,
             video_lists,
             video_anchors,
+            saved_searches: part::<SearchesBody>(find(PARTS[5]))?.map(|b| b.searches).unwrap_or_default(),
         })
     }
 }
@@ -221,6 +240,7 @@ mod tests {
         data.bookmarks.push(Bookmark { id: "b1".into(), reference: Ref::parse("John.3.16").unwrap(), label: String::new() });
         data.saved_videos.push("ps23".into());
         data.video_lists.push(VideoList { id: "l1".into(), name: "Psalms".into(), videos: vec!["ps23".into()] });
+        data.saved_searches.push(SavedSearch { id: "s1".into(), query: "G25 NEAR/3 G2316".into(), label: "love and God".into() });
         data.video_anchors.push(VideoAnchor {
             id: "a1".into(),
             video: "ps23".into(),
@@ -256,6 +276,7 @@ mod tests {
         let mut old = sample();
         old.video_lists.clear();
         old.video_anchors.clear();
+        old.saved_searches.clear();
         let bytes = old.to_archive().unwrap();
         let mut entries = read_archive(&bytes).unwrap();
         let videos = entries.iter_mut().find(|e| e.name == "content/videos.json").unwrap();

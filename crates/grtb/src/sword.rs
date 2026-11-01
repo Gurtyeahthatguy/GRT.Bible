@@ -6,8 +6,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::markup::{attr, decode_entities, escape, plain_text, tag_words, to_markup, tokens, Source, Target, Token};
-use crate::module::{BookContent, EntryContent, LinkGroup, NoteRow, TaggedRow, TitleRow, VerseRow};
+use crate::markup::{attr, decode_entities, escape, plain_text, strong_number, tag_words, to_markup, tokens, words_from_tagged, Source, Target, Token};
+use crate::module::{BookContent, EntryContent, LinkGroup, NoteRow, TaggedRow, TitleRow, VerseRow, WordRow};
 use crate::passage::{parse_osis, parse_words, Context};
 use crate::refs::Ref;
 use crate::source::{decode, sha256_hex};
@@ -498,7 +498,7 @@ fn load(path: &Path) -> Result<Opened, String> {
         }
         let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let hash = sha256_hex(&bytes);
-        let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("not a SWORD ZIP: {e}"))?;
+        let archive = crate::source::open_archive(bytes)?;
         (Box::new(ZipFiles(archive)), hash)
     };
     let mut files = files;
@@ -630,6 +630,9 @@ pub fn open(path: &Path) -> Result<SwordModule, String> {
             continue;
         }
         if let Some(markup) = tag_words(&raw, source) {
+            for (text, strong, morph) in words_from_tagged(&markup) {
+                content.words.push(WordRow { chapter, verse: v, text, strong, morph, ..Default::default() });
+            }
             content.tagged.push(TaggedRow { chapter, verse: v, markup });
         }
         content.verses.push(VerseRow { chapter, verse: v, text: e.text, paragraph: next_paragraph || e.paragraph_before || v == 1 });
@@ -970,6 +973,35 @@ fn read_book(opened: &mut Opened) -> Result<Vec<Section>, String> {
     Ok(out)
 }
 
+/// A lexicon keyed by Strong's numbers is also found as `G26` or `H7225`, and by the Greek of its first `orth`.
+fn dictionary_aliases(key: &str, text: &str, prefix: Option<char>) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(prefix) = prefix else { return out };
+    if key.chars().all(|c| c.is_ascii_digit()) {
+        if let Some(n) = strong_number(&format!("{prefix}{key}")) {
+            out.push(n);
+        }
+    }
+    for token in tokens(text) {
+        if let Token::Tag { raw_name: "orth", closing: false, attrs, .. } = token {
+            if attr(attrs, "type").is_some() {
+                continue;
+            }
+            let start = text.find("<orth>").map(|i| i + 6);
+            if let Some(start) = start {
+                if let Some(end) = text[start..].find("</orth>") {
+                    let lemma = decode_entities(&text[start..start + end]).trim().to_string();
+                    if !lemma.is_empty() && !lemma.is_ascii() {
+                        out.push(lemma);
+                    }
+                }
+            }
+            break;
+        }
+    }
+    out
+}
+
 /// Reads a module that is not a Bible; `as_kind` reads a commentary as cross-references.
 pub fn read_resource(path: &Path, as_kind: Option<&str>, scheme: &Scheme) -> Result<Resource, String> {
     let mut opened = load(path)?;
@@ -997,8 +1029,11 @@ pub fn read_resource(path: &Path, as_kind: Option<&str>, scheme: &Scheme) -> Res
             warnings = w;
             let none = |_: Target| Vec::new();
             let resolve = resolver(scheme, Context::default());
+            let feature = opened.conf.get("Feature").unwrap_or("");
+            let prefix = if feature.contains("GreekDef") { Some('G') } else if feature.contains("HebrewDef") { Some('H') } else { None };
             for (key, bytes) in raw {
                 let text = decode(&bytes);
+                let aliases = dictionary_aliases(&key, &text, prefix);
                 let body = match text.trim().strip_prefix("@LINK") {
                     Some(target) => {
                         let target = target.trim();
@@ -1006,7 +1041,7 @@ pub fn read_resource(path: &Path, as_kind: Option<&str>, scheme: &Scheme) -> Res
                     }
                     None => to_markup(&text, source, if source == Source::Plain { &none } else { &resolve }),
                 };
-                entries.push(EntryContent { key: key.clone(), title: key, body, ..Default::default() });
+                entries.push(EntryContent { key: key.clone(), title: key, body, aliases, ..Default::default() });
             }
         }
         _ => {
@@ -1278,5 +1313,117 @@ mod tests {
         let kjv = open(&dir.join("KJV.zip")).unwrap();
         let genesis = &kjv.books[0].content;
         assert!(genesis.tagged[0].markup.contains("strong:H07225"), "{}", genesis.tagged[0].markup);
+    }
+
+    fn zip_of(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in files {
+            out.start_file(*name, options).unwrap();
+            out.write_all(bytes).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    fn refused(bytes: Vec<u8>) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hostile.zip");
+        std::fs::write(&path, bytes).unwrap();
+        match probe(&path) {
+            Ok(_) => "accepted".into(),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn hostile_archives_are_refused_before_reading() {
+        let conf = b"[X]\nDataPath=./modules/x/\nModDrv=zText\n".to_vec();
+        let climbing = zip_of(&[("mods.d/x.conf", conf.clone()), ("../../etc/passwd", b"x".to_vec())]);
+        assert!(refused(climbing).contains("outside"));
+        let bomb = zip_of(&[("mods.d/x.conf", conf.clone()), ("modules/x/ot.bzz", vec![0u8; 40 * 1024 * 1024])]);
+        assert!(refused(bomb).contains("expands"));
+        let names: Vec<String> = (0..20_001).map(|i| format!("f{i}")).collect();
+        let crowd = zip_of(&names.iter().map(|n| (n.as_str(), Vec::new())).collect::<Vec<_>>());
+        assert!(refused(crowd).contains("files"));
+    }
+
+    /// Bytes that look like nothing, the same on every run.
+    fn noise(seed: u32, len: usize) -> Vec<u8> {
+        let mut x = seed.wrapping_mul(2654435761).max(1);
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn garbage_indexes_give_errors_not_panics() {
+        let english = crate::versification::scheme("english");
+        for seed in 1..40u32 {
+            let size = 64 + (seed as usize * 37) % 400;
+            let cases: [(&str, &[(&str, Vec<u8>)]); 3] = [
+                ("[C]\nDataPath=./modules/c/\nModDrv=zCom\nBlockType=BOOK\n", &[
+                    ("modules/c/nt.bzs", noise(seed, size)),
+                    ("modules/c/nt.bzv", noise(seed + 1, size)),
+                    ("modules/c/nt.bzz", noise(seed + 2, size)),
+                ]),
+                ("[D]\nDataPath=./modules/d/dict\nModDrv=zLD\n", &[
+                    ("modules/d/dict.idx", noise(seed, size)),
+                    ("modules/d/dict.dat", noise(seed + 1, size)),
+                    ("modules/d/dict.zdx", noise(seed + 2, size)),
+                    ("modules/d/dict.zdt", noise(seed + 3, size)),
+                ]),
+                ("[B]\nDataPath=./modules/b/book\nModDrv=RawGenBook\n", &[
+                    ("modules/b/book.idx", noise(seed, size)),
+                    ("modules/b/book.dat", noise(seed + 1, size)),
+                    ("modules/b/book.bdt", noise(seed + 2, size)),
+                ]),
+            ];
+            for (conf, files) in cases {
+                let dir = module_dir(conf, files);
+                let outcome = std::panic::catch_unwind(|| read_resource(dir.path(), None, english).map(|r| r.entries.len()));
+                assert!(outcome.is_ok(), "seed {seed} panicked on {conf}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_book_whose_sections_point_at_each_other_ends() {
+        // Two nodes, each the other's next sibling.
+        let mut dat = Vec::new();
+        let mut idx = Vec::new();
+        for (i, (next, child)) in [(-1i32, 4i32), (8, -1), (4, -1)].iter().enumerate() {
+            idx.extend_from_slice(&(dat.len() as u32).to_le_bytes());
+            for v in [-1i32, *next, *child] {
+                dat.extend_from_slice(&v.to_le_bytes());
+            }
+            dat.extend_from_slice(format!("n{i}").as_bytes());
+            dat.push(0);
+            dat.extend_from_slice(&0u16.to_le_bytes());
+        }
+        let dir = module_dir("[B]\nDataPath=./modules/b/book\nModDrv=RawGenBook\n", &[
+            ("modules/b/book.idx", idx),
+            ("modules/b/book.dat", dat),
+            ("modules/b/book.bdt", Vec::new()),
+        ]);
+        let read = read_resource(dir.path(), None, crate::versification::scheme("english")).unwrap();
+        assert_eq!(read.entries.len(), 2);
+    }
+
+    #[test]
+    fn deep_nesting_and_entities_stay_bounded() {
+        let none = |_: Target| Vec::new();
+        let deep = format!("{}text{}", "<b>".repeat(100_000), "</b>".repeat(100_000));
+        let out = to_markup(&deep, Source::Thml, &none);
+        assert!(out.contains("text") && out.len() < 1_000);
+        let entities = r#"<!DOCTYPE x [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;">]><p>&b;&b;&b;</p>"#;
+        let out = to_markup(entities, Source::Thml, &none);
+        assert!(!out.contains("aaaa"), "{out}");
+        let huge = "x".repeat(crate::markup::ENTRY_LIMIT + 10);
+        assert!(to_markup(&huge, Source::Thml, &none).len() <= crate::markup::ENTRY_LIMIT + 20);
     }
 }

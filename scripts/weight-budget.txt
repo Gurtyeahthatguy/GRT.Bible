@@ -1,0 +1,16 @@
+# What check-weight.sh allows, in bytes or milliseconds or kilobytes; 0.2 measured each a little under.
+binary              target/release/grt-bible                                                         9000000
+appimage            target/release/bundle/appimage/*.AppImage                                      120000000
+deb                 target/release/bundle/deb/*.deb                                                  36000000
+rpm                 target/release/bundle/rpm/*.rpm                                                  36000000
+apk                 src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk             44000000
+pack                packs/TSK.grtb                                                                    9500000
+pack                packs/SBLGNT.grtb                                                                13000000
+pack                packs/OSHB.grtb                                                                  32000000
+pack                packs/BDB.grtb                                                                    4000000
+pack                packs/STRONGG.grtb                                                                3000000
+pack                packs/STRONGH.grtb                                                                3000000
+pack                packs/ABBOTT.grtb                                                                 5500000
+open_ms             modules and packs opened                                                             250
+read_ms             chapters, words, searches and lookups in each                                       1500
+peak_kb             memory of the reading above                                                        65536

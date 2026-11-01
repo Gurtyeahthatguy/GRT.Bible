@@ -33,6 +33,14 @@ pub fn fold(text: &str, language: &str) -> String {
     out
 }
 
+/// A printed word without the punctuation around it; vowel points and accents stay.
+pub fn bare(word: &str) -> String {
+    let keep = |c: char| c.is_alphanumeric() || is_combining_mark(c);
+    let start = word.find(keep).unwrap_or(word.len());
+    let end = word.rfind(keep).map(|i| i + word[i..].chars().next().map(char::len_utf8).unwrap_or(1)).unwrap_or(start);
+    word.get(start..end.max(start)).unwrap_or("").to_string()
+}
+
 /// An FTS5 query from what a person typed: words become prefixes, quotes keep phrases.
 pub fn fts_query(input: &str, language: &str) -> Option<String> {
     let folded = fold(input, language);
@@ -89,6 +97,15 @@ mod tests {
     fn latin_spellings() {
         assert_eq!(fold("Cælum ejus", "la"), fold("caelum eius", "la"));
         assert_eq!(fold("Vivit", "la"), "uiuit");
+    }
+
+    #[test]
+    fn bare_words() {
+        assert_eq!(bare("ἔδωκεν,"), "ἔδωκεν");
+        assert_eq!(bare("הָאָֽרֶץ׃"), "הָאָֽרֶץ");
+        assert_eq!(bare("(καὶ)"), "καὶ");
+        assert_eq!(bare("אָ"), "אָ");
+        assert_eq!(bare("..."), "");
     }
 
     #[test]

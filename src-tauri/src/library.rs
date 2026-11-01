@@ -37,6 +37,8 @@ pub struct ModuleInfo {
     pub generated_at: String,
     pub bundled: bool,
     pub has_notes: bool,
+    /// Whether the words carry lemmas, Strong's numbers or morphology.
+    pub words: bool,
     pub books: Vec<BookInfo>,
     pub missing_books: Vec<String>,
     pub summary: String,
@@ -100,6 +102,7 @@ fn open_entry(path: &Path, bundled: bool, origins: &BTreeMap<String, Origin>) ->
         generated_at: m.generated_at.clone(),
         bundled,
         has_notes: m.source_notes,
+        words: module.has_words()?,
         books,
         missing_books: m.missing_books.clone(),
         summary,
@@ -416,6 +419,8 @@ pub struct HitView {
     pub chapter: u16,
     pub verse: u16,
     pub text: String,
+    /// Words to mark that the query found by lemma, number or form.
+    pub marks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -451,9 +456,202 @@ pub fn search(entries: &[Arc<Entry>], query: &str, books: &[u8], offset: u32, li
             continue;
         }
         for h in found {
-            hits.push(HitView { module: entry.info.abbreviation.clone(), book: osis_of(h.book), chapter: h.chapter, verse: h.verse, text: h.text });
+            hits.push(HitView { module: entry.info.abbreviation.clone(), book: osis_of(h.book), chapter: h.chapter, verse: h.verse, text: h.text, marks: Vec::new() });
         }
     }
+    Ok(SearchView { total, hits, terms })
+}
+
+/// Whether a language is written in Hebrew script.
+fn hebrew(language: &str) -> bool {
+    matches!(language, "hbo" | "he" | "heb" | "arc")
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordOut {
+    pub verse: u16,
+    pub position: u32,
+    pub text: String,
+    pub lemma: String,
+    pub strong: String,
+    pub gloss: String,
+    pub xlit: String,
+    pub features: String,
+    /// The morphology in words.
+    pub parsing: String,
+    /// The original word behind a translation's word, found in another module.
+    pub original: bool,
+}
+
+/// What original-language modules know about a Strong's number.
+fn lemma_elsewhere(sources: &[Arc<Entry>], strong: &str) -> Option<grtb::module::LemmaRow> {
+    sources.iter().find_map(|s| s.with(|m| m.find_lemmas(Some(strong), None)).ok().and_then(|v| v.into_iter().next()))
+}
+
+/// The words of a chapter. A translation tagged with Strong's numbers borrows lemma and
+/// gloss from an installed original-language module, which makes the reverse interlinear.
+pub fn chapter_words(entry: &Entry, osis: &str, chapter: u16, sources: &[Arc<Entry>]) -> Result<Vec<WordOut>, String> {
+    let index = book_index(osis)?;
+    let words = entry.with(|m| m.chapter_words(index, chapter))?;
+    let is_hebrew = hebrew(&entry.info.language);
+    let mut cache: std::collections::HashMap<String, Option<grtb::module::LemmaRow>> = std::collections::HashMap::new();
+    Ok(words
+        .into_iter()
+        .map(|w| {
+            let mut out = WordOut {
+                verse: w.verse,
+                position: w.position,
+                parsing: grtb::morph::describe(&w.features, is_hebrew || w.morph.starts_with("oshb:"), w.morph.starts_with("oshb:A")),
+                text: w.text,
+                lemma: w.lemma,
+                strong: w.strong,
+                gloss: w.gloss,
+                xlit: w.xlit,
+                features: w.features,
+                original: false,
+            };
+            if out.lemma.is_empty() && !out.strong.is_empty() {
+                let found = cache.entry(out.strong.clone()).or_insert_with(|| lemma_elsewhere(sources, &out.strong));
+                if let Some(l) = found {
+                    out.lemma = l.lemma.clone();
+                    out.gloss = l.gloss.clone();
+                    out.xlit = l.xlit.clone();
+                    out.original = true;
+                }
+            }
+            out
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LexiconView {
+    pub module: String,
+    pub title: String,
+    pub entry: grtb::module::EntryRow,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordStudy {
+    pub module: String,
+    pub lemma: String,
+    pub strong: String,
+    pub gloss: String,
+    pub xlit: String,
+    pub total: usize,
+    pub books: Vec<(&'static str, u32)>,
+    pub forms: Vec<(String, u32)>,
+    pub lexicon: Vec<LexiconView>,
+    pub occurrences: Vec<OccurrenceView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OccurrenceView {
+    pub book: &'static str,
+    pub chapter: u16,
+    pub verse: u16,
+    pub text: String,
+    pub parsing: String,
+}
+
+/// Everything about one lemma: where it occurs, in which forms, and what the lexicons say.
+pub fn word_study(entry: &Entry, strong: &str, lemma: &str, gloss: &str, lexicons: &[Arc<Entry>]) -> Result<WordStudy, String> {
+    let rows = entry.with(|m| m.find_lemmas((!strong.is_empty()).then_some(strong), (!lemma.is_empty()).then_some(lemma)))?;
+    let rows: Vec<_> = if !strong.is_empty() && !lemma.is_empty() {
+        let key = grtb::text::fold(lemma, &entry.info.language);
+        let same: Vec<_> = rows.iter().filter(|r| grtb::text::fold(&r.lemma, &entry.info.language) == key).cloned().collect();
+        if same.is_empty() { rows } else { same }
+    } else {
+        rows
+    };
+    // Homonyms share a number and a headword; the gloss of the word chosen tells them apart.
+    let rows: Vec<_> = match rows.iter().filter(|r| !gloss.is_empty() && r.gloss == gloss).cloned().collect::<Vec<_>>() {
+        exact if !exact.is_empty() => exact,
+        _ => rows,
+    };
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let found = entry.with(|m| m.occurrences(&ids, 200_000))?;
+    let is_hebrew = hebrew(&entry.info.language);
+    let mut books: Vec<(&'static str, u32)> = Vec::new();
+    let mut forms: BTreeMap<String, u32> = BTreeMap::new();
+    for o in &found {
+        let osis = osis_of(o.book);
+        match books.last_mut() {
+            Some((b, n)) if *b == osis => *n += 1,
+            _ => books.push((osis, 1)),
+        }
+        *forms.entry(grtb::text::bare(&o.text)).or_default() += 1;
+    }
+    let mut forms: Vec<(String, u32)> = forms.into_iter().collect();
+    forms.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    forms.truncate(40);
+    let first = rows.first();
+    let strong = first.map(|r| r.strong.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| strong.to_string());
+    let lemma_text = first.map(|r| r.lemma.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| lemma.to_string());
+    let mut lexicon = Vec::new();
+    for dict in lexicons {
+        let mut hit = None;
+        for key in [strong.as_str(), lemma_text.as_str()] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(e) = dict.with(|m| m.entry_by_key(key))? {
+                hit = Some(e);
+                break;
+            }
+        }
+        if let Some(e) = hit {
+            lexicon.push(LexiconView { module: dict.info.abbreviation.clone(), title: dict.info.title.clone(), entry: e });
+        }
+    }
+    let occurrences = found
+        .iter()
+        .map(|o| OccurrenceView {
+            book: osis_of(o.book),
+            chapter: o.chapter,
+            verse: o.verse,
+            text: o.text.clone(),
+            parsing: grtb::morph::describe(&o.features, is_hebrew, false),
+        })
+        .collect();
+    Ok(WordStudy {
+        module: entry.info.abbreviation.clone(),
+        lemma: lemma_text,
+        strong,
+        gloss: first.map(|r| r.gloss.clone()).unwrap_or_default(),
+        xlit: first.map(|r| r.xlit.clone()).unwrap_or_default(),
+        total: found.len(),
+        books,
+        forms,
+        lexicon,
+        occurrences,
+    })
+}
+
+/// A search with Strong's numbers, lemmas, morphology or operators, across modules.
+pub fn advanced_search(entries: &[Arc<Entry>], node: &grtb::query::Node, books: &[u8], offset: u32, limit: u32) -> Result<SearchView, String> {
+    let limit = limit.clamp(1, 200) as usize;
+    // Which module, which verse, and the positions of the words that made it.
+    let mut all: Vec<(usize, grtb::query::Matches)> = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let matches: grtb::query::Matches = entry.with(|m| grtb::query::run(m, node))?.into_iter().filter(|(k, _)| books.is_empty() || books.contains(&k.0)).collect();
+        all.push((i, matches));
+    }
+    let total = all.iter().map(|(_, m)| m.len()).sum::<usize>() as u32;
+    let mut hits = Vec::new();
+    let page = all.into_iter().flat_map(|(i, m)| m.into_iter().map(move |(k, p)| (i, k, p)));
+    for (i, (b, c, v), positions) in page.skip(offset as usize).take(limit) {
+        let entry = &entries[i];
+        let (text, words) = entry.with(|m| Ok::<_, String>((m.verse(b, c, v)?.unwrap_or_default(), if positions.is_empty() { Vec::new() } else { m.verse_words(b, c, v)? })))?;
+        let marks = words.into_iter().filter(|(p, _)| positions.contains(p)).map(|(_, t)| grtb::text::bare(&t)).collect();
+        hits.push(HitView { module: entry.info.abbreviation.clone(), book: osis_of(b), chapter: c, verse: v, text, marks });
+    }
+    let mut terms = Vec::new();
+    grtb::query::text_terms(node, entries.first().map(|e| e.info.language.as_str()).unwrap_or("en"), &mut terms);
     Ok(SearchView { total, hits, terms })
 }
 
@@ -517,6 +715,76 @@ mod tests {
         let long = passage(&vul, Ref::parse("Gen.1.30").unwrap(), Ref::parse("Gen.2.2").unwrap(), 50).unwrap();
         assert_eq!(long.iter().map(|v| (v.chapter, v.verse)).collect::<Vec<_>>(), [(1, 30), (1, 31), (2, 1), (2, 2)]);
         assert_eq!(passage(&vul, Ref::parse("Gen.1.1").unwrap(), Ref::parse("Gen.50.26").unwrap(), 10).unwrap().len(), 10);
+    }
+
+    fn with_packs() -> Option<Library> {
+        let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+        if !packs.join("SBLGNT.grtb").exists() {
+            return None;
+        }
+        let (library, problems) = Library::load(&[(modules_dir(), true), (packs, false)], &BTreeMap::new());
+        assert!(problems.is_empty(), "{problems:?}");
+        Some(library)
+    }
+
+    #[test]
+    fn the_original_language_packs_read_word_by_word() {
+        let Some(lib) = with_packs() else { return };
+        let sbl = lib.bible("SBLGNT").unwrap();
+        assert!(sbl.info.words);
+        let words = chapter_words(&sbl, "John", 3, &[]).unwrap();
+        let loved = words.iter().find(|w| w.verse == 16 && w.position == 3).unwrap();
+        assert_eq!((loved.text.as_str(), loved.lemma.as_str(), loved.strong.as_str()), ("ἠγάπησεν", "ἀγαπάω", "G25"));
+        assert_eq!(loved.parsing, "verb, third person, aorist, active, indicative, singular");
+        let oshb = lib.bible("OSHB").unwrap();
+        let genesis = chapter_words(&oshb, "Gen", 1, &[]).unwrap();
+        assert_eq!((genesis[1].strong.as_str(), genesis[1].xlit.as_str()), ("H1254", "bārāʾ"));
+        assert_eq!(genesis[1].parsing, "verb, third person, perfect, singular, masculine, qal");
+
+        let study = word_study(&sbl, "G25", "", "", &lib.kind("dictionary")).unwrap();
+        assert_eq!(study.lemma, "ἀγαπάω");
+        assert!(study.total > 100 && study.books.iter().any(|(b, _)| *b == "1John"));
+        let lexicons: Vec<&str> = study.lexicon.iter().map(|l| l.module.as_str()).collect();
+        assert!(lexicons.contains(&"STRONGG") && lexicons.contains(&"ABBOTT"), "{lexicons:?}");
+        let create = word_study(&oshb, "H1254", "", "", &lib.kind("dictionary")).unwrap();
+        // The two words numbered 1254 are counted apart when the reader chose one of them.
+        let fat = genesis.iter().find(|w| w.strong == "H1254").unwrap();
+        let only = word_study(&oshb, "H1254", &fat.lemma, &fat.gloss, &[]).unwrap();
+        assert!(only.total < create.total, "{} of {}", only.total, create.total);
+        assert!(create.lexicon.iter().any(|l| l.module == "BDB" && grtb::text::fold(&l.entry.key, "hbo") == "ברא"), "{:?}", create.lexicon.iter().map(|l| &l.entry.key).collect::<Vec<_>>());
+
+        let node = grtb::query::parse("G25 NEAR/3 G2316").unwrap();
+        let found = advanced_search(&[sbl.clone()], &node, &[], 0, 50).unwrap();
+        assert!(found.hits.iter().any(|h| h.book == "1John"));
+        assert!(found.hits[0].marks.len() >= 2);
+    }
+
+    /// The same count two ways: the query engine over the pack, and the MorphGNT files read directly.
+    #[test]
+    fn a_morphological_search_agrees_with_the_source() {
+        let Some(lib) = with_packs() else { return };
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sources/sblgnt");
+        if !dir.exists() {
+            return;
+        }
+        let sbl = lib.bible("SBLGNT").unwrap();
+        let cases = [("ἀγαπάω", "imperative", 'D', 3), ("πιστεύω", "aorist", 'A', 1), ("λέγω", "participle", 'P', 3)];
+        for (lemma, word, letter, slot) in cases {
+            let mut expected = 0usize;
+            for file in std::fs::read_dir(&dir).unwrap().flatten() {
+                for line in std::fs::read_to_string(file.path()).unwrap().lines() {
+                    let f: Vec<&str> = line.split(' ').collect();
+                    if f[6] == lemma && f[2].chars().nth(slot) == Some(letter) {
+                        expected += 1;
+                    }
+                }
+            }
+            let query = format!("lemma:{lemma}+morph:{word}");
+            let matches = sbl.with(|m| grtb::query::run(m, &grtb::query::parse(&query).unwrap())).unwrap();
+            let found: usize = matches.values().map(Vec::len).sum();
+            assert!(expected > 0);
+            assert_eq!(found, expected, "{query}");
+        }
     }
 
     #[test]

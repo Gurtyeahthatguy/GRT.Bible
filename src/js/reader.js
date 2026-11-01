@@ -1,6 +1,7 @@
 /** The chapter as semantic HTML: headings, paragraphs or one verse per line, notes at the end. */
 
 import { h, withBreaks } from './dom.js';
+import { isGreek, isHebrew, shaper, shortParsing, transliterateGreek } from './original.js';
 import { compareOsis } from './reference.js';
 
 function overlaps(start, end, a, b) {
@@ -26,7 +27,7 @@ export function annotationsFor(verses, user) {
   return out;
 }
 
-function verseNode(v, settings, marks, noteNumbers, anchors) {
+function verseNode(v, settings, marks, noteNumbers, anchors, shape = (t) => t) {
   const mark = marks.get(v.verse) || { color: null, notes: [], bookmark: null };
   const cls = ['verse'];
   if (mark.color) cls.push(`hl-${mark.color}`);
@@ -34,7 +35,7 @@ function verseNode(v, settings, marks, noteNumbers, anchors) {
     'span',
     { class: cls.join(' '), id: `v${v.verse}`, dataset: { verse: v.verse, canon: v.canon } },
     settings.verseNumbers ? h('sup', { class: 'vn' }, String(v.verse)) : null,
-    h('span', { class: 'vt' }, withBreaks(v.text)),
+    h('span', { class: 'vt' }, withBreaks(shape(v.text))),
   );
   for (const n of noteNumbers.get(v.verse) || []) {
     node.append(h('a', { class: 'fn-ref', href: `#fn${n}`, id: `fnref${n}`, role: 'doc-noteref', 'aria-label': `Note ${n}` }, String(n)));
@@ -74,6 +75,7 @@ export function renderChapter({ data, module, bookName, settings, user, videos =
   article.append(header);
 
   const marks = annotationsFor(data.verses, user);
+  const shape = shaper(lang, settings.original);
   const titles = new Map();
   for (const t of data.titles) {
     if (t.kind !== 'psalm' && !settings.titles) continue;
@@ -95,7 +97,7 @@ export function renderChapter({ data, module, bookName, settings, user, videos =
     const before = titles.get(v.verse) || [];
     if (before.length) paragraph = null;
     for (const t of before) article.append(titleNode(t));
-    const node = verseNode(v, settings, marks, noteNumbers, anchors);
+    const node = verseNode(v, settings, marks, noteNumbers, anchors, shape);
     if (settings.layout === 'verses') {
       article.append(h('p', { class: 'line' }, node));
       continue;
@@ -144,7 +146,7 @@ export function renderParallel({ data, modules, bookNames, settings }) {
         td.append(
           h('span', { class: 'verse', dataset: i === 0 ? { verse: piece.verse, canon: row.canon } : { } },
             settings.verseNumbers ? h('sup', { class: 'vn' }, label) : null,
-            h('span', { class: 'vt' }, withBreaks(piece.text)), ' '),
+            h('span', { class: 'vt' }, withBreaks(shaper(m.language, settings.original)(piece.text))), ' '),
         );
       }
       if (!cell.length && i > 0) td.append(h('span', { class: 'empty', 'aria-label': 'No corresponding verse' }, '·'));
@@ -154,4 +156,48 @@ export function renderParallel({ data, modules, bookNames, settings }) {
   }
   table.append(body);
   return h('div', { class: 'parallel-wrap' }, h('h1', { class: 'sr-only' }, `${bookNames[0]} ${data.primary.chapter}`), table);
+}
+
+/** One word of the interlinear: the word, then what is known of it, each on its own line. */
+function wordCell(w, language, shape, hebrew) {
+  const greek = isGreek(language);
+  const xlit = greek ? transliterateGreek(w.text) : w.xlit;
+  const lemmaLanguage = w.original ? (w.strong.startsWith('H') ? 'hbo' : 'grc') : language;
+  return h('button', {
+    type: 'button',
+    class: `iword${w.strong || w.lemma ? '' : ' plain'}`,
+    dataset: { position: w.position, strong: w.strong, lemma: w.lemma, gloss: w.gloss || '', parsing: w.parsing || '' },
+    title: [w.lemma, w.strong, w.parsing].filter(Boolean).join(' · '),
+  },
+  h('span', { class: 'w-text' }, shape(w.text)),
+  w.lemma ? h('span', { class: 'w-lemma', lang: lemmaLanguage, dir: isHebrew(lemmaLanguage) ? 'rtl' : 'ltr' }, shaper(lemmaLanguage, {})(w.lemma)) : h('span', { class: 'w-lemma' }, '\u00a0'),
+  h('span', { class: 'w-xlit', lang: 'und-Latn', dir: 'ltr' }, xlit || '\u00a0'),
+  h('span', { class: 'w-gloss', dir: 'ltr' }, w.gloss || '\u00a0'),
+  h('span', { class: 'w-morph', dir: 'ltr' }, shortParsing(w.features, hebrew) || '\u00a0'),
+  h('span', { class: 'w-strong', dir: 'ltr' }, w.strong || '\u00a0'));
+}
+
+/** The chapter word by word: the original with lemma, transliteration, gloss, morphology and Strong's
+ * number under each word, or a tagged translation with the original lemma under its words. */
+export function renderInterlinear({ data, words, module, bookName, settings }) {
+  const lang = module.language;
+  const shape = shaper(lang, settings.original);
+  const hebrew = isHebrew(lang);
+  const article = h('article', { class: 'chapter interlinear', lang, dir: module.direction || 'ltr' },
+    h('header', { class: 'chapter-head' }, h('h1', {}, `${bookName} ${data.chapter}`)));
+  const byVerse = new Map();
+  for (const w of words) {
+    const list = byVerse.get(w.verse) || [];
+    list.push(w);
+    byVerse.set(w.verse, list);
+  }
+  for (const v of data.verses) {
+    const list = byVerse.get(v.verse);
+    const row = h('div', { class: 'iverse verse', id: `v${v.verse}`, dataset: { verse: v.verse, canon: v.canon } },
+      h('sup', { class: 'vn' }, String(v.verse)));
+    if (list?.length) row.append(...list.map((w) => wordCell(w, lang, shape, hebrew)));
+    else row.append(h('span', { class: 'vt' }, withBreaks(shape(v.text))));
+    article.append(row);
+  }
+  return article;
 }

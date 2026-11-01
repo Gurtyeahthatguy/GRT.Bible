@@ -1,7 +1,10 @@
 //! Builds `.grtb` modules and the video catalog package.
 
+mod bdb;
 mod martini;
+mod morphgnt;
 mod n1904;
+mod oshb;
 mod rtf;
 
 use std::collections::BTreeMap;
@@ -21,8 +24,13 @@ Usage:
   grtb-convert sword   <folder|zip>      [options] -o <out.grtb>
                        a commentary, dictionary or book keeps its kind;
                        --as crossrefs reads a commentary as cross-references
+  grtb-convert morphgnt <folder> --lexemes <lexemes.yaml> [options] -o <out.grtb>
+  grtb-convert oshb    <folder> --index <LexicalIndex.xml> --aug <AugIndex.xml> [options] -o <out.grtb>
+  grtb-convert bdb     <BrownDriverBriggs.xml> --index <LexicalIndex.xml> [options] -o <out.grtb>
   grtb-convert catalog <folder>                    -o <out.grt>
   grtb-convert info    <module.grtb>
+  grtb-convert measure <folder> [--packs <folder>]
+                       opens every module and reads from each, then prints the time and peak memory
 
 Options:
   --id ID  --abbreviation ABBR  --title TITLE  --language CODE
@@ -199,6 +207,28 @@ fn run() -> Result<(), String> {
             }
             write_module(&args, books, &sword.hash)
         }
+        "morphgnt" => {
+            let lexemes = std::fs::read_to_string(args.options.get("lexemes").ok_or("--lexemes is required")?).map_err(|e| e.to_string())?;
+            let books = morphgnt::parse(&args.input, &morphgnt::lexemes(&lexemes))?;
+            write_module(&args, books, &hash_dir(&args.input)?)
+        }
+        "oshb" => {
+            let index = std::fs::read_to_string(args.options.get("index").ok_or("--index is required")?).map_err(|e| e.to_string())?;
+            let aug = std::fs::read_to_string(args.options.get("aug").ok_or("--aug is required")?).map_err(|e| e.to_string())?;
+            let books = oshb::parse(&args.input, &oshb::lexical_index(&index, &aug))?;
+            write_module(&args, books, &hash_dir(&args.input)?)
+        }
+        "bdb" => {
+            let index = std::fs::read_to_string(args.options.get("index").ok_or("--index is required")?).map_err(|e| e.to_string())?;
+            let xml = std::fs::read(&args.input).map_err(|e| e.to_string())?;
+            let entries = bdb::parse(&String::from_utf8_lossy(&xml), &bdb::strongs_by_entry(&index));
+            let output = args.output.as_ref().ok_or("-o is required")?;
+            let content = assemble_resource(&description(&args)?, "dictionary", entries, Vec::new(), vec!["HebrewDef".into()], &generation_date(&args), &sha256_hex(&xml));
+            module::write(output, &content)?;
+            println!("{}: dictionary with {} entries", output.display(), content.entries.len());
+            Ok(())
+        }
+        "measure" => measure(&args.input, args.options.get("packs").map(PathBuf::from)),
         "catalog" => build_catalog(&args.input, args.output.as_deref().ok_or("-o is required")?),
         "info" => {
             let m = Module::open(&args.input)?;
@@ -213,6 +243,72 @@ fn run() -> Result<(), String> {
         }
         _ => Err(USAGE.to_string()),
     }
+}
+
+/// Peak resident memory of this process, in kilobytes, where the system says.
+fn peak_kb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|l| l.strip_prefix("VmHWM:")).and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+}
+
+/// Opens the modules the way the program does at start, then reads what a reader would.
+fn measure(modules: &Path, packs: Option<PathBuf>) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for dir in std::iter::once(modules.to_path_buf()).chain(packs) {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.extension().map(|x| x == "grtb").unwrap_or(false)).collect();
+        found.sort();
+        paths.extend(found);
+    }
+    let opened: Vec<Module> = paths.iter().map(|p| Module::open(p)).collect::<Result<_, _>>()?;
+    for m in &opened {
+        if m.kind() == "bible" {
+            m.books()?;
+        }
+    }
+    let open_ms = start.elapsed().as_millis();
+    let read = std::time::Instant::now();
+    let john = grtb::canon::book_by_osis("John").unwrap().index;
+    let genesis = grtb::canon::book_by_osis("Gen").unwrap().index;
+    for m in &opened {
+        match m.kind() {
+            "bible" => {
+                m.chapter(john, 3)?;
+                m.chapter(genesis, 1)?;
+                m.chapter_words(john, 3)?;
+                if let Some(fts) = grtb::text::fts_query("lux", &m.manifest.language) {
+                    m.search(&fts, &[], 50, 0)?;
+                }
+                if m.has_words()? {
+                    grtb::query::run(m, &grtb::query::parse("G25 OR H430").unwrap())?;
+                }
+            }
+            "dictionary" => {
+                m.lookup("a", 50)?;
+            }
+            _ => {}
+        }
+    }
+    println!("modules {}", opened.len());
+    println!("open_ms {open_ms}");
+    println!("read_ms {}", read.elapsed().as_millis());
+    if let Some(kb) = peak_kb() {
+        println!("peak_kb {kb}");
+    }
+    Ok(())
+}
+
+/// One checksum over the files of a folder, by name.
+fn hash_dir(dir: &Path) -> Result<String, String> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir).map_err(|e| e.to_string())?.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.is_file()).collect();
+    paths.sort();
+    let mut all = Vec::new();
+    for p in paths {
+        all.extend_from_slice(p.file_name().unwrap().to_string_lossy().as_bytes());
+        all.push(0);
+        all.extend(std::fs::read(&p).map_err(|e| e.to_string())?);
+    }
+    Ok(sha256_hex(&all))
 }
 
 /// A folder with `catalog.json` and the thumbnails it names.

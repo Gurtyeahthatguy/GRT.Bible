@@ -44,8 +44,33 @@ beside the program packages. Today that is:
 | File | Kind | Size | Licence |
 |---|---|---|---|
 | `TSK.grtb` | Cross-references: the Treasury of Scripture Knowledge, about 66,000 groups of references | 8 MB | Public domain |
+| `SBLGNT.grtb` | Bible: the SBL Greek New Testament, word by word | 11 MB | CC BY 4.0 and CC BY-SA 3.0 |
+| `OSHB.grtb` | Bible: the Hebrew Old Testament, word by word | 28 MB | Public domain, with CC BY 4.0 morphology |
+| `BDB.grtb` | Lexicon: Brown-Driver-Briggs, Hebrew | 3 MB | Public domain, CC BY 4.0 transcription |
+| `STRONGG.grtb` | Lexicon: Strong's Greek | 2 MB | Public domain |
+| `STRONGH.grtb` | Lexicon: Strong's Hebrew | 2 MB | Public domain |
+| `ABBOTT.grtb` | Lexicon: Abbott-Smith, Greek | 4 MB | Public domain |
 
 The release's `SHA256SUMS` file covers these too.
+
+**For the original languages**, install `SBLGNT.grtb` for Greek and
+`OSHB.grtb` for Hebrew, then at least one lexicon of each: `ABBOTT.grtb` or
+`STRONGG.grtb` for Greek, `BDB.grtb` or `STRONGH.grtb` for Hebrew. Then:
+
+1. Choose **SBLGNT** or **OSHB** in the translation list of the toolbar.
+2. Click **Words** in the toolbar. Each word now shows its lemma,
+   transliteration, a short meaning, its form and its Strong's number.
+3. Click a word. The library opens on **Word**: how often the word occurs and
+   in which books, its forms, and what each installed lexicon says.
+4. **Find every occurrence** lists them in the search panel;
+   **Export for Grid…** saves them as a `.csv` file that GRT Grid opens with
+   **Import CSV**.
+
+**About the licences.** Three of these packs carry Creative Commons licences.
+They let you use, copy and share the files freely, on one condition: the
+authors are named, as each module does in its licence line. `SBLGNT.grtb`
+must also be shared under the same licence as its parsing (CC BY-SA). Nothing
+changes for the program itself, which stays MIT.
 
 ---
 
@@ -264,6 +289,10 @@ GRT Bible says why. What each message means:
 | `module kind 'X' is not one this version reads` | The `.grtb` holds a kind of material added in a later version. | Update GRT Bible. |
 | `the module file is damaged: ...` | The file was cut short or changed while downloading. | Download it again and compare it with `SHA256SUMS`. |
 | `the .conf points outside the module` | The module's `.conf` names a folder outside itself. | Do not use that file. |
+| `the archive names a file outside itself` | A file inside the `.zip` is named with `../` or a full path. | Do not use that file. |
+| `... expands N times, which no module text does` | A file inside the `.zip` grows far more than any text does when unpacked. | Do not use that file. |
+| `the archive holds N files, more than any module` | More than 20,000 files inside the `.zip`. | Do not use that file. |
+| `the module holds a view or trigger` | A `.grtb` file contains database parts no module needs. | Do not use that file. |
 
 On Linux, if you check a download from the release page:
 
@@ -300,6 +329,8 @@ target/release/grtb-convert sword Easton.zip \
 target/release/grtb-convert info EAS.grtb
 ```
 
-`--as crossrefs` reads a commentary as cross-references. The same input always
+`--as crossrefs` reads a commentary as cross-references. The original-language
+packs come from `grtb-convert morphgnt`, `oshb` and `bdb`; the sources and the
+commits they were taken at are listed in `scripts/convert-packs.sh`. The same input always
 gives the same bytes, so a module can be checked by its checksum.
 `scripts/convert-packs.sh` builds the packs published with each release.

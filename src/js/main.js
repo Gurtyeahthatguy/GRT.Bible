@@ -10,7 +10,7 @@ import { openPalette } from './palette.js';
 import { libraryTabs, renderLibrary } from './library.js';
 import { askAboutVideos, openPreferences } from './preferences.js';
 import { closePrint, openPrint, printPreviewOpen } from './print.js';
-import { renderChapter, renderParallel } from './reader.js';
+import { renderChapter, renderInterlinear, renderParallel } from './reader.js';
 import { compareOsis, formatReference, splitOsis } from './reference.js';
 import { renderSearch } from './search.js';
 import { applyAppearance, HIGHLIGHT_COLORS, normalise } from './settings.js';
@@ -37,6 +37,10 @@ const state = {
   panel: null,
   studyTab: 'today',
   libraryTab: 'passage',
+  /** The chapter word by word, when the interlinear is on and the module has words. */
+  words: null,
+  /** The word being studied in the library. */
+  wordFocus: null,
 };
 
 export function normaliseUser(raw) {
@@ -52,6 +56,7 @@ export function normaliseUser(raw) {
     saved_videos: Array.isArray(user.saved_videos) ? user.saved_videos : [],
     video_lists: Array.isArray(user.video_lists) ? user.video_lists : [],
     video_anchors: Array.isArray(user.video_anchors) ? user.video_anchors : [],
+    saved_searches: Array.isArray(user.saved_searches) ? user.saved_searches : [],
   };
 }
 
@@ -95,7 +100,7 @@ function setSetting(key, value) {
   state.settings = normalise({ ...before, [key]: value });
   applyAppearance(state.settings);
   saveSettingsSoon();
-  if (['layout', 'verseNumbers', 'titles', 'sourceNotes'].includes(key)) render();
+  if (['layout', 'verseNumbers', 'titles', 'sourceNotes', 'original'].includes(key)) render();
   if (key === 'videos') {
     $('#btn-videos').hidden = state.settings.videos !== true;
     if (!state.settings.videos && state.panel === 'videos') hidePanel();
@@ -184,6 +189,14 @@ async function openPlace(module, book, chapter, verse = null, verseEnd = null, {
       }
     }
   }
+  state.words = null;
+  if (state.settings.interlinear && info.words && !state.parallel) {
+    try {
+      state.words = await api.chapterWords(info.abbreviation, data.book, data.chapter);
+    } catch (error) {
+      toast(String(error), 5000);
+    }
+  }
   state.selection = [];
   state.anchor = null;
   if (data.verses.length) visit(data.verses[0].canon);
@@ -209,7 +222,9 @@ async function openPlace(module, book, chapter, verse = null, verseEnd = null, {
 
 async function openCanon(ref, module = state.module) {
   const [place] = await api.resolve(module, [ref]);
+  // A translation without this book still opens, at its first book, and says why.
   if (place) await openPlace(module, place.book, place.chapter, place.verse);
+  else await openPlace(module, state.book, state.chapter);
 }
 
 function render() {
@@ -218,7 +233,9 @@ function render() {
   if (!state.data || !info) return;
   const scroll = reader.scrollTop;
   let content;
-  if (state.parallel) {
+  if (state.words) {
+    content = renderInterlinear({ data: state.data, words: state.words, module: info, bookName: bookName(info, state.book), settings: state.settings });
+  } else if (state.parallel) {
     const modules = state.parallel.modules.map((m) => moduleInfo(m));
     const names = modules.map((m) => bookName(m, state.book));
     content = renderParallel({ data: state.parallel, modules, bookNames: names, settings: state.settings });
@@ -246,6 +263,8 @@ function updateToolbar() {
   $('#module-picker').value = state.module;
   $('#module-label').textContent = state.module;
   $('#btn-parallel').setAttribute('aria-pressed', state.settings.parallel.enabled ? 'true' : 'false');
+  $('#btn-words').hidden = !info?.words;
+  $('#btn-words').setAttribute('aria-pressed', state.settings.interlinear && info?.words ? 'true' : 'false');
   document.title = `${bookName(info, state.book)} ${state.chapter} · ${state.module} · GRT Bible`;
   drawParallelBar();
 }
@@ -629,6 +648,13 @@ const ctx = {
     showPanel('library', options);
   },
   print: (what) => print(what),
+  studyWord: (focus) => {
+    state.wordFocus = focus;
+    state.libraryTab = 'word';
+    showPanel('library');
+  },
+  wordFocus: () => state.wordFocus,
+  search: (query) => showPanel('search', { initial: query }),
   version: () => state.version,
   platform: () => state.platform,
   modulesChanged: async (abbreviation) => {
@@ -758,6 +784,11 @@ function bind() {
     if (found) await openCanon(found.canon, target);
     else await openPlace(target, state.book, state.chapter);
   });
+  $('#btn-words').addEventListener('click', () => {
+    setSetting('interlinear', !state.settings.interlinear);
+    if (state.settings.interlinear && state.settings.parallel.enabled) setSetting('parallel', { ...state.settings.parallel, enabled: false });
+    reopen();
+  });
   $('#btn-parallel').addEventListener('click', () => {
     const enabled = !state.settings.parallel.enabled;
     let modules = state.settings.parallel.modules.filter((m) => m !== state.module && moduleInfo(m));
@@ -805,6 +836,20 @@ function bind() {
     }
     if (event.target.closest('#chapter-videos')) {
       showPanel('videos', { scope: 'chapter' });
+      return;
+    }
+    const word = event.target.closest('.iword');
+    if (word && !word.classList.contains('plain')) {
+      const verse = word.closest('.verse');
+      ctx.studyWord({
+        module: state.module,
+        strong: word.dataset.strong || '',
+        lemma: word.dataset.lemma || '',
+        gloss: word.dataset.gloss || '',
+        form: word.querySelector('.w-text')?.textContent || '',
+        parsing: word.dataset.parsing || '',
+        canon: verse?.dataset.canon,
+      });
       return;
     }
     const videoMarker = event.target.closest('.marker.video');
