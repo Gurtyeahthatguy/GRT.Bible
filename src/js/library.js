@@ -66,7 +66,9 @@ async function rangeLabels(ctx, ranges) {
     const b = places[i * 2 + 1];
     if (!a) {
       const s = splitOsis(r.start);
-      return s ? formatReference(module.language, s.book, s.chapter, s.verse) : r.start;
+      const e = splitOsis(r.end);
+      if (!s) return r.start;
+      return e && e.book === s.book ? formatReference(module.language, s.book, s.chapter, s.verse, e.chapter, e.verse) : formatReference(module.language, s.book, s.chapter, s.verse);
     }
     const own = module.books.find((x) => x.osis === a.book);
     if (!b || b.book !== a.book) return formatReference(module.language, a.book, a.chapter, a.verse, a.chapter, a.verse, own?.abbrev);
@@ -149,36 +151,42 @@ function spanLabel(ctx, span, label) {
   return label;
 }
 
-async function commentarySection(ctx, at) {
-  const commentaries = ctx.modules().filter((m) => m.kind === 'commentary');
-  const section = h('section', { class: 'lib-section' }, h('h3', {}, 'Commentary'));
-  if (!commentaries.length) {
-    section.append(h('p', { class: 'fine' }, 'No commentary is installed. Install one from the Installed tab.'));
-    return section;
-  }
-  const chosen = commentaries.find((m) => m.abbreviation === ctx.settings().library.commentary) || commentaries[0];
-  const picker = h('select', { 'aria-label': 'Commentary' }, commentaries.map((m) => h('option', { value: m.abbreviation }, `${m.abbreviation} · ${m.title}`)));
-  picker.value = chosen.abbreviation;
-  picker.addEventListener('change', () => {
-    ctx.setSetting('library', { ...ctx.settings().library, commentary: picker.value });
+/** The commentaries shown side by side: the reader's choice, or the first installed. */
+export function shownCommentaries(installed, library) {
+  const known = new Set(installed.map((m) => m.abbreviation));
+  const chosen = (library.commentaries || []).filter((c) => known.has(c));
+  if (chosen.length) return chosen;
+  const single = installed.find((m) => m.abbreviation === library.commentary) || installed[0];
+  return single ? [single.abbreviation] : [];
+}
+
+async function commentaryColumn(ctx, at, module, shown) {
+  const column = h('div', { class: 'commentary-column' });
+  const setShown = (list) => {
+    ctx.setSetting('library', { ...ctx.settings().library, commentaries: list, commentary: list[0] || null });
     ctx.refreshLibrary();
-  });
+  };
   const step = (forward) => async () => {
     try {
-      const target = await api.commentaryStep(chosen.abbreviation, at, forward);
+      const target = await api.commentaryStep(module.abbreviation, at, forward);
       if (target) ctx.openRange(target, target);
       else toast(forward ? 'The commentary ends here.' : 'The commentary starts here.');
     } catch (error) {
       toast(String(error), 5000);
     }
   };
-  section.append(h('div', { class: 'row' }, picker,
-    h('button', { type: 'button', class: 'quiet', 'aria-label': 'Previous comment', title: 'Previous comment', onclick: step(false) }, '‹'),
-    h('button', { type: 'button', class: 'quiet', 'aria-label': 'Next comment', title: 'Next comment', onclick: step(true) }, '›')));
-  const entries = await api.commentary(chosen.abbreviation, at);
+  column.append(h('div', { class: 'row commentary-head' },
+    h('strong', { title: module.title }, module.abbreviation),
+    h('span', { class: 'fine grow' }, module.title),
+    h('button', { type: 'button', class: 'quiet', 'aria-label': `Previous comment in ${module.abbreviation}`, title: 'Previous comment', onclick: step(false) }, '‹'),
+    h('button', { type: 'button', class: 'quiet', 'aria-label': `Next comment in ${module.abbreviation}`, title: 'Next comment', onclick: step(true) }, '›'),
+    shown.length > 1
+      ? h('button', { type: 'button', class: 'quiet', 'aria-label': `Close ${module.abbreviation}`, title: 'Close this commentary', onclick: () => setShown(shown.filter((c) => c !== module.abbreviation)) }, '×')
+      : null));
+  const entries = await api.commentary(module.abbreviation, at);
   if (!entries.length) {
-    section.append(h('p', { class: 'fine' }, `${chosen.abbreviation} says nothing about this verse.`));
-    return section;
+    column.append(h('p', { class: 'fine' }, `${module.abbreviation} says nothing about this verse.`));
+    return column;
   }
   const spans = entries.map((e) => splitRange(e.spans[0]) || { start: at, end: at });
   const labels = await rangeLabels(ctx, spans);
@@ -186,10 +194,54 @@ async function commentarySection(ctx, at) {
   for (const [i, entry] of entries.entries()) {
     const label = spanLabel(ctx, entry.spans[0], labels[i]);
     const intro = /\.0(-|$)/.test(entry.spans[0] || '');
-    const article = h('article', { class: 'entry', lang: chosen.language, dir: chosen.direction || 'ltr' }, renderMarkup(entry.body, handlers));
-    section.append(intro
+    const article = h('article', { class: 'entry', lang: module.language, dir: module.direction || 'ltr' }, renderMarkup(entry.body, handlers));
+    column.append(intro
       ? h('details', { class: 'entry-wrap' }, h('summary', {}, label), article)
       : h('div', { class: 'entry-wrap' }, h('h4', { class: 'entry-label' }, label), article));
+  }
+  return column;
+}
+
+async function commentarySection(ctx, at, container) {
+  const commentaries = ctx.modules().filter((m) => m.kind === 'commentary');
+  const section = h('section', { class: 'lib-section' }, h('h3', {}, 'Commentary'));
+  if (!commentaries.length) {
+    section.append(h('p', { class: 'fine' }, 'No commentary is installed. Haydock, the Catena Aurea and the Fathers are published as modules beside each release.'));
+    return section;
+  }
+  const shown = shownCommentaries(commentaries, ctx.settings().library);
+  const others = commentaries.filter((m) => !shown.includes(m.abbreviation));
+  if (others.length && shown.length < 4) {
+    const add = h('select', { 'aria-label': 'Add a commentary beside' },
+      h('option', { value: '' }, 'Add a commentary beside…'),
+      others.map((m) => h('option', { value: m.abbreviation }, `${m.abbreviation} · ${m.title}`)));
+    add.addEventListener('change', () => {
+      if (!add.value) return;
+      const list = [...shown, add.value];
+      ctx.setSetting('library', { ...ctx.settings().library, commentaries: list, commentary: list[0] });
+      ctx.refreshLibrary();
+    });
+    section.append(h('div', { class: 'row' }, add));
+  }
+  container?.closest?.('.panel')?.classList.toggle('wide', shown.length > 1);
+  const columns = await Promise.all(shown.map((abbreviation) => commentaryColumn(ctx, at, commentaries.find((m) => m.abbreviation === abbreviation), shown)));
+  section.append(h('div', { class: `commentary-columns${shown.length > 1 ? ' several' : ''}` }, columns));
+  return section;
+}
+
+/** Entries of the dictionaries of things that cite the verse, each opening in the Dictionary tab. */
+async function topicsSection(ctx, at) {
+  const sets = await api.topics(at);
+  if (!sets.length) return null;
+  const section = h('section', { class: 'lib-section' }, h('h3', {}, 'In the dictionaries'));
+  for (const set of sets) {
+    section.append(h('details', { open: sets.length === 1 },
+      h('summary', {}, `${set.module} · ${set.title} (${set.entries.length})`),
+      h('p', { class: 'topic-list' }, set.entries.map((e) => [h('button', {
+        type: 'button',
+        class: 'link',
+        onclick: () => ctx.openEntry?.(set.module, e.key),
+      }, e.title || e.key), ' ']))));
   }
   return section;
 }
@@ -203,7 +255,8 @@ async function passageTab(container, ctx) {
   const [label] = await rangeLabels(ctx, [{ start: at, end: at }]);
   container.append(h('p', { class: 'lib-focus' }, h('strong', {}, label),
     h('span', { class: 'fine' }, ctx.hasSelection() ? ' · the selected verse' : ' · the first verse in view, or select one')));
-  container.append(await crossReferences(ctx, at), await commentarySection(ctx, at));
+  const [refs, commentary, topics] = await Promise.all([crossReferences(ctx, at), commentarySection(ctx, at, container), topicsSection(ctx, at).catch(() => null)]);
+  container.append(refs, commentary, topics || '');
 }
 
 // Word

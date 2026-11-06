@@ -144,6 +144,20 @@
       return { total: hits.length, hits: hits.slice(0, 50), terms: needle.split(/\s+/).filter(Boolean) };
     },
     votd: () => ['Ps.23.1', 'Ps.23.1'],
+    liturgy: ({ date }) => {
+      const day = (window.__PREVIEW_LITURGY__ || {})[date];
+      if (!day) throw new Error('The preview knows the calendar only around today. Build grtb-convert to see it.');
+      return day;
+    },
+    liturgy_notice: () => 'Sources and licences of the calendar.',
+    plans: () => Object.entries(window.__PREVIEW_PLANS__ || {}).map(([id, p]) => ({ id, title: p.title, days: p.days.length })),
+    plan_schedule: ({ id }) => (window.__PREVIEW_PLANS__ || {})[id]?.days || [],
+    read_text: () => { throw new Error('The preview cannot read files.'); },
+    topics: ({ at }) => packs.filter((p) => p.meta.kind === 'dictionary').map((p) => {
+      const n = pack(at);
+      const ids = new Set(p.spans.filter((s) => s.first <= n && s.last >= n).map((s) => s.entry));
+      return { module: p.meta.abbreviation, title: p.meta.title, entries: p.entries.filter((e) => ids.has(e.id)).map((e) => ({ id: e.id, key: e.key, title: e.title, children: 0 })) };
+    }).filter((t) => t.entries.length),
     user_save: ({ data: next }) => { user = next; },
     user_export: () => undefined,
     user_import: () => user,

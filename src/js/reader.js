@@ -1,6 +1,7 @@
 /** The chapter as semantic HTML: headings, paragraphs or one verse per line, notes at the end. */
 
 import { h, withBreaks } from './dom.js';
+import { markPhrase } from './phrase.js';
 import { isGreek, isHebrew, shaper, shortParsing, transliterateGreek } from './original.js';
 import { compareOsis } from './reference.js';
 
@@ -44,6 +45,8 @@ function verseNode(v, settings, marks, noteNumbers, anchors, shape = (t) => t) {
     node.append(h('span', { class: 'marker bookmark', title: 'Bookmarked', 'aria-label': 'Bookmarked' }));
   }
   for (const note of mark.notes) {
+    const text = note.quote && node.querySelector('.vt');
+    if (text) markPhrase(text, note.quote);
     node.append(h('button', { class: 'marker note', title: 'Your note', 'aria-label': 'Open your note', dataset: { note: note.id } }));
   }
   const videos = anchors.get(v.verse);

@@ -5,7 +5,10 @@
 #   morphgnt/morphological-lexicon   0dca2af89f413cbb24f617ddbdc347e9d798ddf3  -> sources/morph-lexicon/lexemes.yaml
 #   openscriptures/morphhb           3d15126fb1ef74867fc1434be1942e837932691f  -> sources/morphhb/*.xml (wlc/, without VerseMap.xml)
 #   openscriptures/HebrewLexicon     21c9add13bc727d3a951361778e97e3ff7afd1ce  -> sources/hebrew-lexicon/
-# and the CrossWire modules TSK, StrongsGreek, StrongsHebrew and AbbottSmith in sources/packs/.
+#   CodeBlue519/drb                  09d0e9dd810fb305eda529561be964dea0b3f42a  -> sources/haydock/haydock.tsv (commentary/haydock.tsv)
+#   HistoricalChristianFaith/Commentaries-Database, release "latest" of 6 Nov 2026 -> sources/hcf/commentaries.sqlite
+# and the CrossWire modules TSK, StrongsGreek, StrongsHebrew and AbbottSmith in sources/packs/,
+# Easton, Smith and Nave in sources/dicts/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,5 +57,37 @@ mkdir -p "$OUT"
   --id eng-abbott-smith --abbreviation ABBOTT --title "Abbott-Smith, Manual Greek Lexicon of the New Testament" \
   --language en --year 1922 --license "Public domain" --date 2026-10-30 \
   --source "CrossWire SWORD module AbbottSmith, version 4.1" -o "$OUT/ABBOTT.grtb"
+
+DICTS="$SOURCES/dicts"
+
+"$BIN" haydock "$SOURCES/haydock/haydock.tsv" \
+  --id eng-haydock --abbreviation HAYDOCK --title "Haydock's Catholic Bible Commentary" \
+  --language en --year 1859 --versification hebrew --license "Public domain" --date 2026-11-06 \
+  --source "github.com/CodeBlue519/drb, commentary/haydock.tsv" -o "$OUT/HAYDOCK.grtb"
+
+"$BIN" fathers "$SOURCES/hcf/commentaries.sqlite" --excerpts catena \
+  --id eng-catena-aurea --abbreviation CATENA --title "Catena Aurea, Commentary on the Four Gospels" \
+  --language en --year 1841 --versification hebrew --license "Public domain" --date 2026-11-06 \
+  --source "github.com/HistoricalChristianFaith/Commentaries-Database, Newman's translation of 1841" -o "$OUT/CATENA.grtb"
+
+"$BIN" fathers "$SOURCES/hcf/commentaries.sqlite" --excerpts fathers \
+  --id eng-church-fathers --abbreviation FATHERS --title "The Fathers on Scripture" \
+  --language en --versification hebrew --license "Public domain" --date 2026-11-06 \
+  --source "github.com/HistoricalChristianFaith/Commentaries-Database, excerpts from the Ante-Nicene and Nicene and Post-Nicene Fathers" -o "$OUT/FATHERS.grtb"
+
+"$BIN" sword "$DICTS/Easton.zip" \
+  --id eng-easton --abbreviation EASTON --title "Easton's Bible Dictionary" \
+  --language en --year 1897 --license "Public domain" --date 2026-11-06 \
+  --source "CrossWire SWORD module Easton, version 2.0.1" -o "$OUT/EASTON.grtb"
+
+"$BIN" sword "$DICTS/Smith.zip" \
+  --id eng-smith --abbreviation SMITH --title "Smith's Bible Dictionary" \
+  --language en --year 1884 --license "Public domain" --date 2026-11-06 \
+  --source "CrossWire SWORD module Smith, version 1.3" -o "$OUT/SMITH.grtb"
+
+"$BIN" sword "$DICTS/Nave.zip" \
+  --id eng-nave --abbreviation NAVE --title "Nave's Topical Bible" \
+  --language en --year 1896 --license "Public domain" --date 2026-11-06 \
+  --source "CrossWire SWORD module Nave, version 3.0" -o "$OUT/NAVE.grtb"
 
 ls -la "$OUT"

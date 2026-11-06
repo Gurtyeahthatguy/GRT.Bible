@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canon::{book, books};
 use crate::integrity::Report;
+use crate::markup::strong_number;
 use crate::refs::Ref;
 use crate::text::fold;
 
@@ -739,8 +740,27 @@ impl Module {
             .collect::<Result<_, _>>()
             .map_err(err)?;
         rows.into_iter()
-            .map(|(id, parent, key, title, body)| Ok(EntryRow { id, parent, key, title, body, spans: self.spans_of(id)? }))
+            .map(|(id, parent, key, title, body)| Ok(EntryRow { id, parent, key, title: self.label(id, title)?, body, spans: self.spans_of(id)? }))
             .collect()
+    }
+
+    /// A title that is only a SWORD number, as `00025`, shown by its Strong's number and word instead.
+    fn label(&self, id: i64, title: String) -> Result<String, String> {
+        if title.is_empty() || !title.bytes().all(|b| b.is_ascii_digit()) || !self.has_table("aliases")? {
+            return Ok(title);
+        }
+        if title.bytes().all(|b| b == b'0') {
+            return Ok("Introduction".into());
+        }
+        let mut stmt = self.db.prepare_cached("SELECT alias FROM aliases WHERE entry = ?1 ORDER BY rowid").map_err(err)?;
+        let aliases: Vec<String> = stmt.query_map(params![id], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+        let number = aliases.iter().find(|a| strong_number(a).as_deref() == Some(&a.to_uppercase()));
+        let word = aliases.iter().find(|a| !a.is_ascii());
+        Ok(match (number, word) {
+            (Some(n), Some(w)) => format!("{} {w}", n.to_uppercase()),
+            (Some(n), None) => n.to_uppercase(),
+            _ => title,
+        })
     }
 
     pub fn entry(&self, id: i64) -> Result<Option<EntryRow>, String> {
@@ -760,6 +780,26 @@ impl Module {
         )
     }
 
+    /// Dictionary entries that cite a verse, in the order of the dictionary.
+    pub fn entries_citing(&self, r: Ref, limit: u32) -> Result<Vec<Heading>, String> {
+        let v = pack(r);
+        let whole = pack(Ref::new(r.book, 0, 0));
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT id, key, title FROM entries WHERE id IN (
+                     SELECT entry FROM spans WHERE first BETWEEN ?1 AND ?2 AND last >= ?2)
+                 ORDER BY fold, id LIMIT ?3",
+            )
+            .map_err(err)?;
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map(params![whole, v, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)?;
+        rows.into_iter().map(|(id, key, title)| Ok(Heading { id, key, title: self.label(id, title)?, children: 0 })).collect()
+    }
+
     /// The first entry about a verse at or after the given one, to step through a commentary.
     pub fn next_span(&self, after: Ref, forward: bool) -> Result<Option<String>, String> {
         let sql = if forward {
@@ -771,19 +811,39 @@ impl Module {
         Ok(found.map(|n| unpack(n).osis()))
     }
 
-    /// Headwords starting with the folded text, in the order of the module.
+    /// Headwords or aliases starting with the folded text, in the order of the module; a bare number finds G and H numbers.
     pub fn lookup(&self, text: &str, limit: u32) -> Result<Vec<Heading>, String> {
         let folded = fold(text.trim(), &self.manifest.language);
-        let mut stmt = self
-            .db
-            .prepare_cached(
-                "SELECT id, key, title FROM entries WHERE fold >= ?1 AND fold < ?1 || char(1114111) ORDER BY fold, id LIMIT ?2",
-            )
-            .map_err(err)?;
-        let rows = stmt
-            .query_map(params![folded, limit], |r| Ok(Heading { id: r.get(0)?, key: r.get(1)?, title: r.get(2)?, children: 0 }))
-            .map_err(err)?;
-        rows.collect::<Result<_, _>>().map_err(err)
+        let rows: Vec<(i64, String, String)> = if folded.is_empty() || !self.has_table("aliases")? {
+            let mut stmt = self
+                .db
+                .prepare_cached(
+                    "SELECT id, key, title FROM entries WHERE fold >= ?1 AND fold < ?1 || char(1114111) ORDER BY fold, id LIMIT ?2",
+                )
+                .map_err(err)?;
+            let found = stmt.query_map(params![folded, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?;
+            found.collect::<Result<_, _>>().map_err(err)?
+        } else {
+            let number = folded.trim_start_matches('0');
+            let (greek, hebrew) = if folded.bytes().all(|b| b.is_ascii_digit()) && !number.is_empty() {
+                (format!("g{number}"), format!("h{number}"))
+            } else {
+                (folded.clone(), folded.clone())
+            };
+            let mut stmt = self
+                .db
+                .prepare_cached(
+                    "SELECT id, key, title FROM entries WHERE id IN (
+                         SELECT id FROM entries WHERE fold >= ?1 AND fold < ?1 || char(1114111)
+                         UNION SELECT entry FROM aliases WHERE alias >= ?2 AND alias < ?2 || char(1114111)
+                         UNION SELECT entry FROM aliases WHERE alias >= ?3 AND alias < ?3 || char(1114111))
+                     ORDER BY fold, id LIMIT ?4",
+                )
+                .map_err(err)?;
+            let found = stmt.query_map(params![folded, greek, hebrew, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?;
+            found.collect::<Result<_, _>>().map_err(err)?
+        };
+        rows.into_iter().map(|(id, key, title)| Ok(Heading { id, key, title: self.label(id, title)?, children: 0 })).collect()
     }
 
     /// The entry whose headword or alias is exactly this, ignoring case and accents.
@@ -795,12 +855,24 @@ impl Module {
         if !self.has_table("aliases")? {
             return Ok(None);
         }
-        Ok(self
-            .entry_rows(
-                "SELECT id, parent, key, title, body FROM entries WHERE id = (SELECT entry FROM aliases WHERE alias = ?1 ORDER BY entry LIMIT 1)",
-                params![folded],
-            )?
-            .pop())
+        // A bare number is a Strong's number in whichever language the lexicon has.
+        let wanted = if folded.bytes().all(|b| b.is_ascii_digit()) && !folded.is_empty() {
+            vec![format!("g{}", folded.trim_start_matches('0')), format!("h{}", folded.trim_start_matches('0'))]
+        } else {
+            vec![folded]
+        };
+        for alias in wanted {
+            let found = self
+                .entry_rows(
+                    "SELECT id, parent, key, title, body FROM entries WHERE id = (SELECT entry FROM aliases WHERE alias = ?1 ORDER BY entry LIMIT 1)",
+                    params![alias],
+                )?
+                .pop();
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Ok(None)
     }
 
     fn has_table(&self, name: &str) -> Result<bool, String> {
@@ -1178,6 +1250,44 @@ mod tests {
         assert_eq!(keys("elie"), ["Élie"]);
         assert_eq!(keys("").len(), 4);
         assert_eq!(m.entry_by_key("AARON").unwrap().unwrap().body, "<p>Aaron</p>");
+    }
+
+    #[test]
+    fn a_dictionary_answers_by_the_verses_it_cites() {
+        let entry = |key: &str, spans: Vec<(Ref, Ref)>| EntryContent { key: key.into(), title: key.into(), body: String::new(), spans, ..Default::default() };
+        let (_dir, m) = written("dictionary", vec![
+            entry("Abraham", vec![(r("Gen.12.1"), r("Gen.12.5"))]),
+            entry("Faith", vec![(r("Gen.15.6"), r("Gen.15.6")), (r("Gen.12.4"), r("Gen.12.4"))]),
+            entry("Moses", vec![(r("Exod.2.10"), r("Exod.2.10"))]),
+        ], vec![]);
+        let titles = |at: &str| m.entries_citing(r(at), 10).unwrap().into_iter().map(|h| h.title).collect::<Vec<_>>();
+        assert_eq!(titles("Gen.12.4"), ["Abraham", "Faith"]);
+        assert_eq!(titles("Gen.12.6"), Vec::<String>::new());
+        assert_eq!(titles("Exod.2.10"), ["Moses"]);
+    }
+
+    #[test]
+    fn a_numbered_lexicon_answers_by_number_and_word() {
+        let entry = |key: &str, aliases: &[&str]| EntryContent {
+            key: key.into(),
+            title: key.into(),
+            body: format!("<p>{key}</p>"),
+            aliases: aliases.iter().map(|a| a.to_string()).collect(),
+            ..Default::default()
+        };
+        let (_dir, m) = written("dictionary", vec![
+            entry("00000", &[]),
+            entry("00025", &["G25", "ἀγαπάω"]),
+            entry("00026", &["G26", "ἀγάπη"]),
+            entry("00250", &["G250", "ἀλόη"]),
+        ], vec![]);
+        let titles = |q: &str| m.lookup(q, 10).unwrap().into_iter().map(|h| h.title).collect::<Vec<_>>();
+        assert_eq!(titles("αγαπ"), ["G25 αγαπαω", "G26 αγαπη"]);
+        assert_eq!(titles("G25"), ["G25 αγαπαω", "G250 αλοη"]);
+        assert_eq!(titles("26"), ["G26 αγαπη"]);
+        assert_eq!(titles("")[0], "Introduction");
+        assert_eq!(m.entry_by_key("26").unwrap().unwrap().title, "G26 αγαπη");
+        assert_eq!(m.entry_by_key("ἀγάπη").unwrap().unwrap().key, "00026");
     }
 
     #[test]

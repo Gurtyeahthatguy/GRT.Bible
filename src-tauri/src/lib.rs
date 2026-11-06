@@ -234,6 +234,28 @@ fn crossrefs(state: Shared, at: String) -> Result<Vec<LinksView>, String> {
         .collect()
 }
 
+#[derive(Serialize)]
+struct TopicsView {
+    module: String,
+    title: String,
+    entries: Vec<grtb::module::Heading>,
+}
+
+/// Entries of the dictionaries of things that cite a verse.
+#[tauri::command]
+fn topics(state: Shared, at: String) -> Result<Vec<TopicsView>, String> {
+    let at = parse_ref(&at)?;
+    let lib = read_lock(&state.library);
+    let mut out = Vec::new();
+    for entry in lib.kind("dictionary") {
+        let entries = entry.with(|m| m.entries_citing(at, 60))?;
+        if !entries.is_empty() {
+            out.push(TopicsView { module: entry.info.abbreviation.clone(), title: entry.info.title.clone(), entries });
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 fn entry(state: Shared, module: String, id: i64) -> Result<Option<grtb::module::EntryRow>, String> {
     let entry = read_lock(&state.library).get(&module)?;
@@ -282,6 +304,18 @@ async fn print_page(width: f64, height: f64) -> Result<(), String> {
     Err("Printing goes through the system on Android".into())
 }
 
+/// The liturgical day of a date, `YYYY-MM-DD`, by the calendar of Italy.
+#[tauri::command]
+fn liturgy(date: String) -> Result<grtb::liturgy::Day, String> {
+    grtb::liturgy::day_of(&date).ok_or_else(|| format!("not a date: {date}"))
+}
+
+/// Where the calendar and the references come from, with their licences.
+#[tauri::command]
+fn liturgy_notice() -> &'static str {
+    include_str!("../../crates/grtb/data/LITURGY-NOTICE.txt")
+}
+
 #[tauri::command]
 fn votd(day: u32) -> (String, String) {
     let (a, b) = grtb::votd::for_day(day);
@@ -308,6 +342,35 @@ fn user_import(app: AppHandle, state: Shared, path: String) -> Result<UserData, 
     state.store.save_user(&data)?;
     *state.user.lock().unwrap_or_else(|e| e.into_inner()) = data.clone();
     Ok(data)
+}
+
+/// Text the reader chose to bring back, such as notes edited in GRT Notes or a calendar from GRT Dates.
+#[tauri::command]
+fn read_text(app: AppHandle, path: String) -> Result<String, String> {
+    let bytes = picked::read(&app, &path)?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err("The file is larger than 16 MB, too large for notes or a calendar".into());
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[derive(Serialize)]
+struct PlanView {
+    id: &'static str,
+    title: &'static str,
+    days: u32,
+}
+
+#[tauri::command]
+fn plans() -> Vec<PlanView> {
+    grtb::plans::PLANS.iter().map(|p| PlanView { id: p.id, title: p.title, days: p.days }).collect()
+}
+
+/// The ranges to read on each day of a plan.
+#[tauri::command]
+fn plan_schedule(id: String) -> Result<Vec<Vec<String>>, String> {
+    let plan = grtb::plans::plan(&id).ok_or_else(|| format!("no plan called {id}"))?;
+    Ok(plan.schedule().into_iter().map(|day| day.into_iter().map(|(a, b)| grtb::module::range_osis(a, b)).collect()).collect())
 }
 
 /// Writes text the reader asked to save, such as notes as Markdown.
@@ -540,6 +603,8 @@ pub fn run() {
             parallel,
             search,
             votd,
+            liturgy,
+            liturgy_notice,
             user_save,
             user_export,
             user_import,
@@ -558,11 +623,15 @@ pub fn run() {
             commentary,
             commentary_step,
             crossrefs,
+            topics,
             entry,
             entry_by_key,
             lookup,
             sections,
             save_text,
+            read_text,
+            plans,
+            plan_schedule,
             guide,
             print_page,
             module_report

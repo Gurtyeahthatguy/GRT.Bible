@@ -10,13 +10,14 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const SCHEME: &str = "hebrew";
 const HISTORY_LIMIT: usize = 100;
 
-const PARTS: [&str; 6] = [
+const PARTS: [&str; 7] = [
     "content/reading.json",
     "content/notes.json",
     "content/highlights.json",
     "content/bookmarks.json",
     "content/videos.json",
     "content/searches.json",
+    "content/plans.json",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +44,17 @@ pub struct Note {
     pub start: Ref,
     pub end: Ref,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// The words of the verse the note is about, as the reader selected them.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub quote: String,
+    /// The translation the words were selected in.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub module: String,
+    /// Other notes this one points to, by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +100,16 @@ pub struct SavedSearch {
     pub label: String,
 }
 
+/// A reading plan the reader follows: when it started and which days are read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanProgress {
+    pub plan: String,
+    /// The first day, `YYYY-MM-DD`.
+    pub start: String,
+    #[serde(default)]
+    pub done: Vec<u32>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserData {
     pub reading: Reading,
@@ -101,6 +123,8 @@ pub struct UserData {
     pub video_anchors: Vec<VideoAnchor>,
     #[serde(default)]
     pub saved_searches: Vec<SavedSearch>,
+    #[serde(default)]
+    pub plans: Vec<PlanProgress>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -129,6 +153,11 @@ struct BookmarksBody {
 #[derive(Serialize, Deserialize)]
 struct SearchesBody {
     searches: Vec<SavedSearch>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlansBody {
+    plans: Vec<PlanProgress>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -176,6 +205,7 @@ impl UserData {
                 json(VideosBody { saved: self.saved_videos.clone(), lists: self.video_lists.clone(), anchors: self.video_anchors.clone() })?,
             ),
             Entry::new(PARTS[5], json(SearchesBody { searches: self.saved_searches.clone() })?),
+            Entry::new(PARTS[6], json(PlansBody { plans: self.plans.clone() })?),
         ];
         write_archive(entries).map_err(|e| e.to_string())
     }
@@ -215,6 +245,7 @@ impl UserData {
             video_lists,
             video_anchors,
             saved_searches: part::<SearchesBody>(find(PARTS[5]))?.map(|b| b.searches).unwrap_or_default(),
+            plans: part::<PlansBody>(find(PARTS[6]))?.map(|b| b.plans).unwrap_or_default(),
         })
     }
 }
@@ -231,7 +262,22 @@ mod tests {
             start: Ref::parse("Sir.24.3").unwrap(),
             end: Ref::parse("Sir.24.4").unwrap(),
             text: "Wisdom speaks.".into(),
+            tags: Vec::new(),
+            quote: String::new(),
+            module: String::new(),
+            links: Vec::new(),
         });
+        data.notes.push(Note {
+            id: "n2".into(),
+            start: Ref::parse("John.1.1").unwrap(),
+            end: Ref::parse("John.1.1").unwrap(),
+            text: "The Word, as in [[n1]].".into(),
+            tags: vec!["logos".into(), "wisdom".into()],
+            quote: "In principio erat Verbum".into(),
+            module: "VUL".into(),
+            links: vec!["n1".into()],
+        });
+        data.plans.push(PlanProgress { plan: "gospels-40".into(), start: "2026-11-06".into(), done: vec![1, 2, 4] });
         data.highlights.push(Highlight {
             start: Ref::parse("Dan.13.45").unwrap(),
             end: Ref::parse("Dan.13.45").unwrap(),
@@ -277,10 +323,13 @@ mod tests {
         old.video_lists.clear();
         old.video_anchors.clear();
         old.saved_searches.clear();
+        old.plans.clear();
+        old.notes.truncate(1);
         let bytes = old.to_archive().unwrap();
         let mut entries = read_archive(&bytes).unwrap();
         let videos = entries.iter_mut().find(|e| e.name == "content/videos.json").unwrap();
         videos.data = b"{\"version\": 1, \"scheme\": \"hebrew\", \"saved\": [\"ps23\"]}".to_vec();
+        entries.retain(|e| e.name != "content/plans.json");
         let rewritten = write_archive(entries).unwrap();
         assert_eq!(UserData::from_archive(&rewritten).unwrap(), old);
     }

@@ -29,11 +29,14 @@ function fakeBackend() {
       books: [{ index: 50, osis: 'John', name: 'Ioannes', abbrev: 'Io', chapters: 21 }], summary: '', missingBooks: [], license: 'CC BY 4.0', source: '', fileName: 'SBL.grtb', origin: null },
     { kind: 'commentary', abbreviation: 'MHC', title: 'Matthew Henry', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
       books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'MHC.grtb', origin: null },
+    { kind: 'commentary', abbreviation: 'HAY', title: 'Haydock', language: 'en', direction: 'ltr', versification: 'hebrew', bundled: false,
+      books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'HAY.grtb', origin: null },
     { kind: 'dictionary', abbreviation: 'EAS', title: 'Easton', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
       books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'EAS.grtb', origin: null },
   );
   const offset = (module, book) => (module === 'BBB' && book === 'Ps' ? 1 : 0);
   const calls = [];
+  const files = {};
   const saved = { user: null, settings: null };
   const user = {
     reading: { current: { module: 'BBB', ref: 'Ps.23.1', offset: 0 }, history: [] },
@@ -80,6 +83,18 @@ function fakeBackend() {
       }
       case 'search': return { total: 1, hits: [{ module: 'AAA', book: 'John', chapter: 3, verse: 16, text: 'Perché Dio ha tanto amato' }], terms: ['perche'] };
       case 'votd': return ['Ps.23.1', 'Ps.23.1'];
+      case 'liturgy': return {
+        date: args.date, season: 'advent', week: 1, sundayCycle: 'B', weekdayCycle: 'I', color: 'purple',
+        celebration: { key: 'Advent1', en: 'First Sunday of Advent', it: 'I domenica di Avvento', grade: 'sunday', color: 'purple' },
+        optional: [], optionalMasses: [],
+        masses: [{ id: 'day', label: 'Mass during the Day', readings: [
+          { slot: 'first-reading', ref: 'Is 63:16-17, 19; 64:2-7', osis: ['Isa.63.16-Isa.63.17', 'Isa.63.19-Isa.63.19', 'Isa.64.2-Isa.64.7'], alternatives: [] },
+          { slot: 'gospel', ref: 'Mk 13:33-37', osis: ['Mark.13.33-Mark.13.37'], alternatives: [] },
+        ] }],
+      };
+      case 'plans': return [{ id: 'gospels-40', title: 'The four Gospels in 40 days', days: 3 }];
+      case 'plan_schedule': return [['Matt.1.1-Matt.2.23'], ['Matt.3.1-Matt.4.25'], ['Matt.5.1-Matt.5.48', 'Mark.1.1-Mark.1.45']];
+      case 'read_text': return files[args.path] ?? '';
       case 'videos_list': return {
         channels: [
           { id: 'c1', name: 'First Channel', url: 'https://www.youtube.com/@first', videos: 30 },
@@ -97,6 +112,7 @@ function fakeBackend() {
         { id: 2, parent: null, key: '', title: '', body: '<p>On <b>this</b> verse, see <a data-ref="John.1.1">John</a>.</p>', spans: [`${args.at}-${args.at}`] },
       ];
       case 'commentary_step': return 'Gen.2.4';
+      case 'topics': return [{ module: 'EAS', title: 'Easton', entries: [{ id: 1, key: 'AARON', title: 'AARON', children: 0 }] }];
       case 'passage': return [{ book: 'Ps', chapter: 22, verse: 1, text: 'Dominus regit me', canon: 'Ps.23.1' }, { book: 'Ps', chapter: 22, verse: 2, text: 'in loco pascuae', canon: 'Ps.23.2' }];
       case 'lookup': {
         // The first, empty lookup answers last, as a slow backend may.
@@ -121,7 +137,7 @@ function fakeBackend() {
       default: return null;
     }
   });
-  return { invoke, calls, saved };
+  return { invoke, calls, saved, files };
 }
 
 let backend;
@@ -218,6 +234,62 @@ describe('the interface', () => {
     expect(document.querySelector('.verse[data-verse="3"] .marker.note')).not.toBeNull();
   });
 
+  it('anchors a note to words of a verse, with tags and links', async () => {
+    const vt = document.querySelector('#reader .verse[data-verse="4"] .vt');
+    const range = document.createRange();
+    range.setStart(vt.firstChild, 0);
+    range.setEnd(vt.firstChild, 5);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    await wait(400);
+    expect(document.querySelector('#selection-bar .selection-label').textContent).toContain('“');
+    [...document.querySelectorAll('#selection-bar button')].find((b) => b.textContent === 'Note').click();
+    await wait(100);
+    window.getSelection().removeAllRanges();
+    const made = app.ctx.user().notes.at(-1);
+    expect(made.quote).toBe(vt.textContent.slice(0, 5).trim());
+    expect(document.querySelector('#reader .verse[data-verse="4"] mark.note-phrase')).not.toBeNull();
+    const tags = [...document.querySelectorAll('.note-tags')].at(-1);
+    tags.value = '#light creation';
+    tags.dispatchEvent(new Event('change'));
+    const linker = [...document.querySelectorAll('select[aria-label="Link to another note"]')].at(-1);
+    linker.value = linker.options[1].value;
+    linker.dispatchEvent(new Event('change'));
+    await wait(100);
+    const notes = app.ctx.user().notes;
+    expect(notes.at(-1).tags).toEqual(['light', 'creation']);
+    expect(notes.at(-1).links).toEqual([notes[0].id]);
+    expect(document.querySelector(`#note-${notes[0].id}`).textContent).toContain('←');
+    const filter = document.querySelector('input[aria-label="Search your notes"]');
+    await type(filter, '#light');
+    expect(document.querySelectorAll('.note-list .card')).toHaveLength(1);
+    await type(filter, '');
+  });
+
+  it('shows the liturgy of the day and follows a reading plan', async () => {
+    [...document.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Today').click();
+    await wait(150);
+    const liturgy = document.querySelector('.liturgy');
+    expect(liturgy.querySelector('h3').textContent).toBe('First Sunday of Advent');
+    const refs = [...liturgy.querySelectorAll('.readings .ref')].map((b) => b.textContent);
+    expect(refs[0]).toBe('Is 63,16-17; 63,19; 64,2-7');
+    expect(backend.calls.filter((c) => c.command === 'liturgy').pop().args.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    liturgy.querySelector('button[aria-label="Next day"]').click();
+    await wait(150);
+    expect(document.querySelector('.liturgy-nav').textContent).toContain('Today');
+    [...document.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Plans').click();
+    await wait(150);
+    [...document.querySelectorAll('.plan-list button')].find((b) => b.textContent === 'Start today').click();
+    await wait(150);
+    const card = document.querySelector('.card.plan');
+    expect(card.textContent).toContain('Day 1 of 3');
+    card.querySelector('input[type="checkbox"]').click();
+    await wait(150);
+    expect(app.ctx.user().plans[0].done).toEqual([1]);
+    expect(document.querySelector('.card.plan').textContent).toContain('1 of 3 days read');
+  });
+
   it('shows the notes of the edition only when asked', async () => {
     expect(document.querySelector('.source-notes')).toBeNull();
     app.ctx.setSetting('sourceNotes', true);
@@ -265,7 +337,8 @@ describe('the interface', () => {
     expect(panel.querySelector('.search-status').textContent).toBe('45 videos');
     panel.querySelector('.more').click();
     expect(panel.querySelectorAll('.card.video')).toHaveLength(45);
-    const [category, channel] = panel.querySelectorAll('.search-form select');
+    const category = panel.querySelector('.search-form select[aria-label="Category"]');
+    const channel = panel.querySelector('.search-form select[aria-label="Channel"]');
     category.value = 'Debates';
     category.dispatchEvent(new Event('change'));
     expect(panel.querySelector('.search-status').textContent).toBe('5 videos');
@@ -300,6 +373,18 @@ describe('the interface', () => {
     expect(asked.args.at).toBe(backend.calls.filter((c) => c.command === 'commentary').pop().args.at);
     expect(panel.querySelector('details.entry-wrap summary').textContent).toMatch(/^Introduction to /);
     expect(panel.querySelector('.entry-wrap .entry b').textContent).toBe('this');
+    expect(panel.querySelector('.topic-list button').textContent).toBe('AARON');
+    const add = [...panel.querySelectorAll('select')].find((s) => s.getAttribute('aria-label') === 'Add a commentary beside');
+    add.value = 'HAY';
+    add.dispatchEvent(new Event('change'));
+    await wait(500);
+    expect([...panel.querySelectorAll('.commentary-column strong')].map((s) => s.textContent)).toEqual(['MHC', 'HAY']);
+    expect(panel.classList.contains('wide')).toBe(true);
+    expect(backend.calls.filter((c) => c.command === 'commentary').slice(-2).map((c) => c.args.module)).toEqual(['MHC', 'HAY']);
+    panel.querySelector('.commentary-column button[aria-label="Close HAY"]').click();
+    await wait(500);
+    expect(panel.querySelectorAll('.commentary-column').length).toBe(1);
+    expect(panel.classList.contains('wide')).toBe(false);
   });
 
   it('looks words up in a dictionary and follows its links', async () => {
@@ -324,7 +409,7 @@ describe('the interface', () => {
     [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Installed').click();
     await wait(60);
     const heads = [...panel.querySelectorAll('.kind-head')].map((h) => h.textContent);
-    expect(heads).toEqual(['Bibles (3)', 'Commentaries (1)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
+    expect(heads).toEqual(['Bibles (3)', 'Commentaries (2)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
     const tsk = panel.querySelector('.card.module[data-module="TSK"]');
     expect(tsk.textContent).toContain('Licence: Public Domain');
     expect(tsk.textContent).toContain('Installed from TSK.grtb on 2026-10-27.');

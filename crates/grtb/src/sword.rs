@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::markup::{attr, decode_entities, escape, plain_text, strong_number, tag_words, to_markup, tokens, words_from_tagged, Source, Target, Token};
+use crate::markup::{attr, cited_ranges, decode_entities, escape, plain_text, strong_number, tag_words, to_markup, tokens, words_from_tagged, Source, Target, Token};
 use crate::module::{BookContent, EntryContent, LinkGroup, NoteRow, TaggedRow, TitleRow, VerseRow, WordRow};
 use crate::passage::{parse_osis, parse_words, Context};
 use crate::refs::Ref;
@@ -999,7 +999,46 @@ fn dictionary_aliases(key: &str, text: &str, prefix: Option<char>) -> Vec<String
             break;
         }
     }
+    // The transliteration, `<orth type="trans">agape</orth>`, finds the entry in Latin letters.
+    for (at, _) in text.match_indices("<orth") {
+        let rest = &text[at..];
+        let Some(close) = rest.find('>') else { continue };
+        if attr(&rest[5..close], "type").as_deref() != Some("trans") {
+            continue;
+        }
+        if let Some(end) = rest[close + 1..].find("</orth>") {
+            let word = decode_entities(&rest[close + 1..close + 1 + end]).trim().to_string();
+            if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphabetic() || c == '\'' || c == '-') {
+                out.push(word);
+            }
+        }
+    }
+    // Without an orth, a plain entry opens with its number and transliteration: `1254 bara' baw-raw'`.
+    if out.len() == 1 {
+        let mut words = text.split_whitespace();
+        if words.next().map(|n| n.trim_start_matches('0')) == Some(key.trim_start_matches('0')) {
+            if let Some(word) = words.next().filter(|w| w.chars().any(char::is_alphabetic)) {
+                out.push(word.to_string());
+            }
+        }
+    }
     out
+}
+
+/// The title of a lexicon entry keyed by number: `G26 ἀγάπη`, or `Introduction` for the front matter at zero.
+fn numbered_title(key: &str, aliases: &[String], prefix: Option<char>) -> Option<String> {
+    prefix?;
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if key.bytes().all(|b| b == b'0') {
+        return Some("Introduction".into());
+    }
+    let number = aliases.first()?;
+    Some(match aliases.get(1) {
+        Some(word) => format!("{number} {word}"),
+        None => number.clone(),
+    })
 }
 
 /// Reads a module that is not a Bible; `as_kind` reads a commentary as cross-references.
@@ -1041,7 +1080,10 @@ pub fn read_resource(path: &Path, as_kind: Option<&str>, scheme: &Scheme) -> Res
                     }
                     None => to_markup(&text, source, if source == Source::Plain { &none } else { &resolve }),
                 };
-                entries.push(EntryContent { key: key.clone(), title: key, body, aliases, ..Default::default() });
+                let title = numbered_title(&key, &aliases, prefix).unwrap_or_else(|| key.clone());
+                // A dictionary of things, not of words, is also found from the verses it cites.
+                let spans = if prefix.is_none() { cited_ranges(&body) } else { Vec::new() };
+                entries.push(EntryContent { key, title, body, aliases, spans, ..Default::default() });
             }
         }
         _ => {
@@ -1204,6 +1246,17 @@ mod tests {
             ("light".to_string(), vec!["Matt.1.3".to_string()]),
         ]);
         assert_eq!(read.links[0].first.osis(), "Matt.1.1");
+    }
+
+    #[test]
+    fn a_numbered_lexicon_is_titled_by_number_and_word() {
+        let aliases = dictionary_aliases("00026", "<entryFree><orth>ἀγάπη</orth> <orth type=\"writing\">ajgavph</orth> <orth rend=\"bold\" type=\"trans\">agape</orth></entryFree>", Some('G'));
+        assert_eq!(aliases, ["G26", "ἀγάπη", "agape"]);
+        assert_eq!(numbered_title("00026", &aliases, Some('G')).as_deref(), Some("G26 ἀγάπη"));
+        let hebrew = dictionary_aliases("01254", "1254 bara' baw-raw'\n a primitive root", Some('H'));
+        assert_eq!(numbered_title("01254", &hebrew, Some('H')).as_deref(), Some("H1254 bara'"));
+        assert_eq!(numbered_title("00000", &[], Some('G')).as_deref(), Some("Introduction"));
+        assert_eq!(numbered_title("AARON", &[], None), None);
     }
 
     #[test]

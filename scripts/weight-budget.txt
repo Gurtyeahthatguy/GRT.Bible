@@ -11,6 +11,12 @@ pack                packs/BDB.grtb                                              
 pack                packs/STRONGG.grtb                                                                3000000
 pack                packs/STRONGH.grtb                                                                3000000
 pack                packs/ABBOTT.grtb                                                                 5500000
+pack                packs/HAYDOCK.grtb                                                               12500000
+pack                packs/CATENA.grtb                                                                 7700000
+pack                packs/FATHERS.grtb                                                                1400000
+pack                packs/EASTON.grtb                                                                 5600000
+pack                packs/SMITH.grtb                                                                  5200000
+pack                packs/NAVE.grtb                                                                   8200000
 open_ms             modules and packs opened                                                             250
 read_ms             chapters, words, searches and lookups in each                                       1500
 peak_kb             memory of the reading above                                                        65536

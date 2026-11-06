@@ -5,12 +5,15 @@ import { describe, it, expect } from 'vitest';
 import { copyHtml, copyText } from '../src/js/copy.js';
 import { markTerms } from '../src/js/dom.js';
 import { renderGuide } from '../src/js/guide.js';
-import { libraryTabs, occurrencesCsv } from '../src/js/library.js';
+import { libraryTabs, occurrencesCsv, shownCommentaries } from '../src/js/library.js';
 import { shaper, shortParsing, transliterateGreek } from '../src/js/original.js';
 import { renderMarkup, splitRange } from '../src/js/markup.js';
 import { textArea } from '../src/js/print.js';
-import { notesMarkdown } from '../src/js/study.js';
-import { anchorsByVerse, videoTouches } from '../src/js/videos.js';
+import { mergeNotes, noteMatches, notesMarkdown, parseNotesMarkdown } from '../src/js/study.js';
+import { joinLabels, shiftDate, slotLabel } from '../src/js/liturgy.js';
+import { doneInIcs, planDay, planIcs } from '../src/js/plans.js';
+import { findPhrase, markPhrase } from '../src/js/phrase.js';
+import { anchorsByVerse, topicsOf, videoTouches } from '../src/js/videos.js';
 import { nextSelection, normaliseUser, swipeDirection } from '../src/js/main.js';
 import { annotationsFor } from '../src/js/reader.js';
 import { DEFAULTS, normalise } from '../src/js/settings.js';
@@ -200,9 +203,18 @@ describe('the library and videos', () => {
     expect(videoTouches({ id: 'v3', refs: [] }, anchors, 'Ps.23.4', 'Ps.23.4')).toBe(false);
   });
 
+  it('shows the chosen commentaries side by side, or the first installed', () => {
+    const installed = [{ abbreviation: 'HAYDOCK' }, { abbreviation: 'CATENA' }];
+    expect(shownCommentaries(installed, { commentaries: [], commentary: null })).toEqual(['HAYDOCK']);
+    expect(shownCommentaries(installed, { commentaries: [], commentary: 'CATENA' })).toEqual(['CATENA']);
+    expect(shownCommentaries(installed, { commentaries: ['GONE', 'CATENA', 'HAYDOCK'], commentary: null })).toEqual(['CATENA', 'HAYDOCK']);
+    expect(shownCommentaries([], { commentaries: ['CATENA'] })).toEqual([]);
+  });
+
   it('keeps library and print settings within their choices', () => {
     const s = normalise({ library: { tab: 'books', commentary: 'MHC', dictionary: 3 }, print: { paper: 'tabloid', size: 40, myNotes: true } });
-    expect(s.library).toEqual({ tab: 'books', commentary: 'MHC', dictionary: null, book: null });
+    expect(s.library).toEqual({ tab: 'books', commentary: 'MHC', commentaries: [], dictionary: null, book: null });
+    expect(normalise({ library: { commentaries: ['HAY', 3, 'CATENA'] } }).library.commentaries).toEqual(['HAY', 'CATENA']);
     expect(s.print).toMatchObject({ paper: 'a4', size: 16, myNotes: true, numbers: true });
     expect(textArea('a5')).toMatchObject({ width: 112, height: 162 });
   });
@@ -236,5 +248,115 @@ describe('Greek and Hebrew', () => {
 
   it('shows the word tab only when a module has words', () => {
     expect(libraryTabs([{ kind: 'bible', words: true }]).map((t) => t.id)).toEqual(['passage', 'word', 'installed']);
+  });
+});
+
+describe('notes that go to GRT Notes and come back', () => {
+  const notes = () => [
+    { id: 'n1', start: 'John.3.16', end: 'John.3.16', text: 'Love first.', tags: ['love'], links: ['n2'], quote: 'tanto amato', module: 'MAR' },
+    { id: 'n2', start: 'Ps.23.1', end: 'Ps.23.2', text: '', tags: [], links: [], quote: '', module: '' },
+  ];
+  const entries = (list) => list.map((note, i) => ({ note, label: ['Gv 3,16', 'Sal 23,1-2'][i], text: i ? null : 'Dio infatti ha tanto amato' }));
+
+  it('writes the id, the words, the tags and the links of each note', () => {
+    const md = notesMarkdown(entries(notes()), { module: 'MAR', date: '2026-11-06' });
+    expect(md).toContain('## Gv 3,16 (MAR)\n<!-- grt-bible n1 John.3.16 John.3.16 -->\n\n> Dio infatti ha tanto amato\n\n**“tanto amato”**\n\nLove first.\n\nTags: #love\n\nLinks: [[#Sal 23,1-2 (MAR)]]');
+  });
+
+  it('brings back edits, tags, links and notes deleted meanwhile', () => {
+    const md = notesMarkdown(entries(notes()), { module: 'MAR', date: '2026-11-06' })
+      .replace('Love first.', 'Love first,\nand always.')
+      .replace('Tags: #love', 'Tags: #love #gospel')
+      .replace('## Sal 23,1-2 (MAR)\n<!-- grt-bible n2 Ps.23.1 Ps.23.2 -->', '## Sal 23,1-2 (MAR)\n<!-- grt-bible n2 Ps.23.1 Ps.23.2 -->\n\nThe shepherd.\n\nLinks: [[#Gv 3,16 (MAR)]]');
+    const parsed = parseNotesMarkdown(md);
+    expect(parsed.map((b) => b.id)).toEqual(['n1', 'n2']);
+    const mine = notes().slice(0, 1);
+    expect(mergeNotes(mine, parsed)).toBe(2);
+    expect(mine[0]).toMatchObject({ text: 'Love first,\nand always.', tags: ['love', 'gospel'], links: ['n2'], quote: 'tanto amato' });
+    expect(mine[1]).toMatchObject({ id: 'n2', start: 'Ps.23.1', end: 'Ps.23.2', text: 'The shepherd.', links: ['n1'] });
+    expect(mergeNotes(mine, parseNotesMarkdown(md))).toBe(0);
+  });
+
+  it('keeps headings and quotations written inside a note, and tells apart two notes on one verse', () => {
+    const list = [
+      { id: 'a', start: 'John.3.16', end: 'John.3.16', text: '## My heading\n\n> Augustine said so.', tags: [], links: ['b'], quote: '', module: '' },
+      { id: 'b', start: 'John.3.16', end: 'John.3.16', text: 'Second.', tags: [], links: [], quote: '', module: '' },
+    ];
+    const md = notesMarkdown(list.map((note) => ({ note, label: 'Gv 3,16', text: 'Dio' })), { module: 'MAR', date: '2026-11-06' });
+    expect(md).toContain('## Gv 3,16 (MAR) 2\n');
+    expect(md).toContain('Links: [[#Gv 3,16 (MAR) 2]]');
+    const parsed = parseNotesMarkdown(md);
+    expect(parsed.map((b) => [b.id, b.text])).toEqual([['a', '## My heading\n\n> Augustine said so.'], ['b', 'Second.']]);
+    const mine = structuredClone(list);
+    expect(mergeNotes(mine, parsed)).toBe(0);
+  });
+
+  it('leaves out a note whose marker was spoilt by hand', () => {
+    const parsed = parseNotesMarkdown('## Gv 3,16 (MAR)\n<!-- grt-bible n9 John.3 John.3.16 -->\n\nText.\n');
+    const mine = [];
+    expect(mergeNotes(mine, parsed)).toBe(0);
+    expect(mine).toEqual([]);
+  });
+
+  it('filters by words, by the place and by #tag', () => {
+    const [n] = notes();
+    expect(noteMatches(n, 'Gv 3,16', 'love')).toBe(true);
+    expect(noteMatches(n, 'Gv 3,16', '#love gv')).toBe(true);
+    expect(noteMatches(n, 'Gv 3,16', '#hope')).toBe(false);
+    expect(noteMatches(n, 'Gv 3,16', 'amato')).toBe(true);
+  });
+});
+
+describe('words a note is about', () => {
+  it('finds them whatever the case, accents and spaces', () => {
+    const text = 'Dio infatti ha tanto  amato il mondo';
+    expect(findPhrase(text, 'TANTO amato')).toEqual([15, 27]);
+    expect(findPhrase('Perché Dio', 'perche')).toEqual([0, 6]);
+    expect(findPhrase(text, 'odiato')).toBeNull();
+  });
+
+  it('marks them across elements', () => {
+    const el = document.createElement('span');
+    el.innerHTML = 'In principio<br>era il Verbo';
+    expect(markPhrase(el, 'principio era')).toBe(true);
+    expect([...el.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['principio', 'era']);
+    expect(markPhrase(el, 'Logos')).toBe(false);
+  });
+});
+
+describe('the liturgy and the reading plans', () => {
+  it('names the readings and writes each reference once per book', () => {
+    expect(slotLabel('first-reading')).toBe('First reading');
+    expect(slotLabel('reading-3')).toBe('Reading 3');
+    expect(slotLabel('psalm-2')).toBe('Psalm 2');
+    expect(joinLabels(['Is 63,16-17', 'Is 63,19', 'Is 64,2-7', 'Sal 80,2'])).toBe('Is 63,16-17; 63,19; 64,2-7; Sal 80,2');
+    expect(joinLabels(['1 Sam 1,24-28'])).toBe('1 Sam 1,24-28');
+    expect(shiftDate('2026-12-31', 1)).toBe('2027-01-01');
+    expect(shiftDate('2028-03-01', -1)).toBe('2028-02-29');
+  });
+
+  it('counts the days of a plan and sends them to Dates and back', () => {
+    expect(planDay('2026-11-06', '2026-11-06')).toBe(1);
+    expect(planDay('2026-11-06', '2027-11-05')).toBe(365);
+    expect(planDay('2026-11-06', '2026-11-05')).toBe(0);
+    const progress = { plan: 'gospels-40', start: '2026-12-31', done: [2] };
+    const ics = planIcs('The four Gospels in 40 days', progress, ['Mt 1-2', 'Mt 3-4', 'Mt 5; Mc 1']);
+    expect(ics).toContain('UID:grt-bible-gospels-40-2026-12-31-day3@grt\r\n');
+    expect(ics).toContain('DUE;VALUE=DATE:20270102\r\n');
+    expect(ics).toContain('SUMMARY:Read Mt 5\\; Mc 1\r\n');
+    expect(ics.split('\r\n').every((line) => new TextEncoder().encode(line).length <= 75)).toBe(true);
+    expect(doneInIcs(ics, progress)).toEqual([2]);
+    // GRT Dates writes a ticked task with STATUS and PERCENT-COMPLETE, and may fold lines.
+    const ticked = ics.replace('UID:grt-bible-gospels-40-2026-12-31-day3@grt\r\n', 'UID:grt-bible-gospels-40-2026-12-31-d\r\n ay3@grt\r\n')
+      .replace(/(ay3@grt\r\n[\s\S]*?)STATUS:NEEDS-ACTION/, '$1STATUS:COMPLETED');
+    expect(doneInIcs(ticked, progress)).toEqual([2, 3]);
+    expect(doneInIcs(ics, { ...progress, start: '2026-01-01' })).toEqual([]);
+  });
+});
+
+describe('video topics', () => {
+  it('finds finer topics in the title', () => {
+    expect(topicsOf({ title: 'Do Catholics Pray to the Saints?', tags: [] })).toEqual(['Mary and the saints', 'Prayer and spiritual life']);
+    expect(topicsOf({ title: 'Why Liberals Love Ugly Art', tags: [] })).toEqual([]);
   });
 });

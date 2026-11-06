@@ -8,6 +8,25 @@ import { compareOsis } from './reference.js';
 const PAGE = 40;
 export const CATEGORIES = ['Theology', 'Doctrine', 'Debates'];
 
+/** Finer topics, found from words of the title and description; a video can have several or none. */
+export const TOPICS = [
+  ['God, Christ and the Trinity', /\b(god|jesus|christ|resurrection|crucifixion|cross|incarnation|trinity|holy spirit|heaven|hell|purgatory|salvation|soul)\b/],
+  ['Scripture', /\b(bible|biblical|scripture|gospels?|psalms?|genesis|exodus|revelation|apocalypse|old testament|new testament|parables?|prophets?|isaiah|paul|epistle|verse)\b/],
+  ['Mary and the saints', /\b(mary|marian|virgin|rosary|saints?|st(?=\.)|padre pio|fatima|lourdes|apparitions?|martyrs?|joseph)\b/],
+  ['Sacraments and liturgy', /\b(mass|eucharist\w*|confession|baptism|sacraments?|communion|liturgy|liturgical|latin mass|priesthood|ordination|anointing|adoration)\b/],
+  ['Prayer and spiritual life', /\b(pray\w*|holiness|spiritual\w*|virtues?|fasting|lent|advent|contemplat\w*|mystic\w*|devotion|suffering|humility|grace)\b/],
+  ['Moral life', /\b(sins?|politics|political|culture|porn\w*|abortion|euthanasia|suicide|gender|sexuality|sexual|contraception|ivf|chastity|lust|addiction|ethics|moral\w*|transgender|same-sex)\b/],
+  ['Marriage and family', /\b(marriage|married|wife|husband|family|families|dating|parents?|children|motherhood|fatherhood)\b/],
+  ['Other faiths and unbelief', /\b(debates?|apologetics|convert\w*|conversion|atheis\w*|muslims?|islam\w*|protestants?|orthodox|mormon\w*|jehovah|evangelicals?|calvinis\w*|luther\w*|jews?|judaism)\b/],
+  ['Faith and reason', /\b(philosoph\w*|aquinas|stoicism|natural law|metaphysics|existence of god|evolution|science|reason|proof)\b/],
+  ['The Church and its history', /\b(pope|papacy|papal|vatican|church history|council|reformation|crusades?|bishops?|history|medieval)\b/],
+];
+
+export function topicsOf(video) {
+  const text = `${video.title} ${video.description || ''} ${(video.tags || []).join(' ')}`.toLowerCase();
+  return TOPICS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
+}
+
 let cache = null;
 
 export function forgetVideos() {
@@ -215,6 +234,10 @@ export async function renderVideos(container, ctx, options = {}) {
   const category = h('select', { 'aria-label': 'Category' },
     option('', `All categories (${videos.length})`),
     categories.map((c) => option(c, `${c} (${count((v) => v.category === c)})`)));
+  const topicOf = new Map(videos.map((v) => [v.id, topicsOf(v)]));
+  const topic = h('select', { 'aria-label': 'Topic' },
+    option('', 'All topics'),
+    TOPICS.map(([name]) => option(name, `${name} (${count((v) => topicOf.get(v.id).includes(name))})`)));
   const channel = h('select', { 'aria-label': 'Channel' },
     option('', 'All channels'),
     channels.map((c) => option(c.id, `${c.name} (${c.videos})`)));
@@ -262,6 +285,7 @@ export async function renderVideos(container, ctx, options = {}) {
     const listed = scope.value.startsWith('list:') ? new Set(user.video_lists.find((l) => `list:${l.id}` === scope.value)?.videos || []) : null;
     shown = videos.filter((v) =>
       (!category.value || v.category === category.value)
+      && (!topic.value || topicOf.get(v.id).includes(topic.value))
       && (!channel.value || v.channel === channel.value)
       && (scope.value !== 'chapter' || chapterIds.has(v.id))
       && (scope.value !== 'selection' || videoTouches(v, user.video_anchors, selection.start, selection.end))
@@ -281,13 +305,15 @@ export async function renderVideos(container, ctx, options = {}) {
   };
 
   filter.addEventListener('input', draw);
-  for (const control of [category, channel, scope]) control.addEventListener('change', draw);
+  for (const control of [category, topic, channel, scope]) control.addEventListener('change', draw);
   more.addEventListener('click', page);
 
   const lists = listManager(ctx, () => ctx.refresh());
   container.append(
-    h('div', { class: 'search-form' }, filter, h('div', { class: 'row' }, category, channel), h('div', { class: 'row' }, scope, importButton)),
+    h('div', { class: 'search-form' }, filter, h('div', { class: 'row' }, category, topic), h('div', { class: 'row' }, channel, scope, importButton)),
     selection ? h('p', { class: 'fine' }, `Selected: ${selection.label}. A video's “Link to” button shows it beside these verses.`) : null,
     channelList, lists, status, list, more, notice);
   draw();
 }
+
+export { card as videoCard, catalog as videoCatalog };

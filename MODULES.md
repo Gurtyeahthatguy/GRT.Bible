@@ -50,6 +50,12 @@ beside the program packages. Today that is:
 | `STRONGG.grtb` | Lexicon: Strong's Greek | 2 MB | Public domain |
 | `STRONGH.grtb` | Lexicon: Strong's Hebrew | 2 MB | Public domain |
 | `ABBOTT.grtb` | Lexicon: Abbott-Smith, Greek | 4 MB | Public domain |
+| `HAYDOCK.grtb` | Commentary: Haydock, on every book | 11 MB | Public domain |
+| `CATENA.grtb` | Commentary: the Catena Aurea of Thomas Aquinas, on the Gospels | 7 MB | Public domain |
+| `FATHERS.grtb` | Commentary: the Fathers on Scripture, short excerpts | 1 MB | Public domain |
+| `EASTON.grtb` | Dictionary: Easton's Bible Dictionary | 5 MB | Public domain |
+| `SMITH.grtb` | Dictionary: Smith's Bible Dictionary | 5 MB | Public domain |
+| `NAVE.grtb` | Topical index: Nave's Topical Bible | 7 MB | Public domain |
 
 The release's `SHA256SUMS` file covers these too.
 
@@ -65,6 +71,22 @@ The release's `SHA256SUMS` file covers these too.
 4. **Find every occurrence** lists them in the search panel;
    **Export for Grid…** saves them as a `.csv` file that GRT Grid opens with
    **Import CSV**.
+
+**For commentaries and dictionaries**, install any of `HAYDOCK.grtb`,
+`CATENA.grtb` and `FATHERS.grtb`, and any of `EASTON.grtb`, `SMITH.grtb` and
+`NAVE.grtb`. Then:
+
+1. Click a verse, or just read: the library follows the first verse in view.
+2. Open **Library**, tab **This passage**. Under **Commentary** you see what
+   the first commentary says about the verse.
+3. To read another one beside it, choose it in **Add a commentary beside…**.
+   Up to four sit side by side; **×** closes one. On a phone they sit one
+   under the other.
+4. Under **In the dictionaries**, the entries that cite the verse are listed by
+   dictionary. Click one to read it in the **Dictionary** tab.
+
+The Catena Aurea covers only the four Gospels, and the Fathers only the verses
+they quote; on any other verse the panel says so.
 
 **About the licences.** Three of these packs carry Creative Commons licences.
 They let you use, copy and share the files freely, on one condition: the

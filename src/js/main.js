@@ -34,6 +34,8 @@ const state = {
   parallel: null,
   selection: [],
   anchor: null,
+  /** Words selected inside one verse, which a new note is anchored to. */
+  phrase: null,
   panel: null,
   studyTab: 'today',
   libraryTab: 'passage',
@@ -50,13 +52,21 @@ export function normaliseUser(raw) {
       current: user.reading?.current ?? null,
       history: Array.isArray(user.reading?.history) ? user.reading.history : [],
     },
-    notes: Array.isArray(user.notes) ? user.notes : [],
+    notes: Array.isArray(user.notes) ? user.notes.filter((n) => n && typeof n === 'object').map((n) => ({
+      ...n,
+      tags: Array.isArray(n.tags) ? n.tags : [],
+      links: Array.isArray(n.links) ? n.links : [],
+      quote: typeof n.quote === 'string' ? n.quote : '',
+      module: typeof n.module === 'string' ? n.module : '',
+    })) : [],
     highlights: Array.isArray(user.highlights) ? user.highlights : [],
     bookmarks: Array.isArray(user.bookmarks) ? user.bookmarks : [],
     saved_videos: Array.isArray(user.saved_videos) ? user.saved_videos : [],
     video_lists: Array.isArray(user.video_lists) ? user.video_lists : [],
     video_anchors: Array.isArray(user.video_anchors) ? user.video_anchors : [],
     saved_searches: Array.isArray(user.saved_searches) ? user.saved_searches : [],
+    plans: Array.isArray(user.plans) ? user.plans.filter((p) => p && typeof p.plan === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.start))
+      .map((p) => ({ plan: p.plan, start: p.start, done: Array.isArray(p.done) ? p.done.filter(Number.isInteger) : [] })) : [],
   };
 }
 
@@ -350,15 +360,18 @@ function showSelection() {
   const bookmarked = state.user.bookmarks.some((b) => b.ref === first.canon);
   if (state.panel === 'library' && state.libraryTab === 'passage') refreshLibrarySoon();
   if (state.panel === 'videos') refreshPanelSoon();
+  const phrase = state.phrase && verses.length === 1 && state.phrase.verse === first.verse ? state.phrase.quote : '';
   clear(bar,
-    h('span', { class: 'selection-label' }, selectionLabel(verses)),
+    h('span', { class: 'selection-label' }, selectionLabel(verses), phrase ? h('span', { class: 'fine' }, ` · “${phrase.length > 40 ? `${phrase.slice(0, 40)}…` : phrase}”`) : null),
     h('button', { onclick: () => copySelection() }, 'Copy'),
     h('span', { class: 'swatches', role: 'group', 'aria-label': 'Highlight' },
       HIGHLIGHT_COLORS.map((color) => h('button', { class: `swatch hl-${color}`, 'aria-label': `Highlight ${color}`, title: `Highlight ${color}`, onclick: () => highlight(color) })),
       h('button', { class: 'swatch none', 'aria-label': 'Remove highlight', title: 'Remove highlight', onclick: () => highlight(null) })),
     h('button', {
       onclick: () => {
-        const note = { id: newId('n'), start: first.canon, end: last.canonEnd, text: '' };
+        const phrase = state.phrase && verses.length === 1 && state.phrase.verse === first.verse ? state.phrase.quote : '';
+        const note = { id: newId('n'), start: first.canon, end: last.canonEnd, text: '', tags: [], links: [], quote: phrase, module: phrase ? state.module : '' };
+        state.phrase = null;
         state.user.notes.push(note);
         saveUserSoon();
         render();
@@ -479,6 +492,20 @@ function textSelection() {
   return { verses, excerpt: fragment.textContent.replace(/\s+/g, ' ').trim() };
 }
 
+/** Words selected inside the text of a single verse, without its number or markers. */
+function phraseSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const verseOf = (node) => (node.nodeType === 1 ? node : node.parentElement)?.closest?.('#reader .verse[data-verse]');
+  const verse = verseOf(range.startContainer);
+  if (!verse || verse !== verseOf(range.endContainer)) return null;
+  const fragment = range.cloneContents();
+  for (const el of fragment.querySelectorAll('.vn, .fn-ref, .marker')) el.remove();
+  const quote = fragment.textContent.replace(/\s+/g, ' ').trim();
+  return quote.length >= 2 && quote.length <= 300 ? { verse: Number(verse.dataset.verse), quote } : null;
+}
+
 /** A quick horizontal stroke turns the page: to the left for the next chapter, to the right for the previous. */
 export function swipeDirection(start, end) {
   const dx = end.x - start.x;
@@ -524,6 +551,7 @@ async function showPanel(kind, options = {}) {
   if (state.settings.panel !== kind) setSetting('panel', kind);
   const panel = $('#panel');
   panel.hidden = false;
+  panel.classList.remove('wide');
   const body = h('div', { class: 'panel-body' });
   const close = h('button', { class: 'quiet', 'aria-label': 'Close panel', onclick: hidePanel }, 'Close');
   const titles = { search: 'Search', study: 'Study', videos: 'Videos', library: 'Library' };
@@ -868,6 +896,26 @@ function bind() {
     state.anchor = state.selection.length ? (event.shiftKey ? state.anchor : number) : null;
     showSelection();
   });
+
+  // Words selected inside one verse select that verse, and a note made now is about those words.
+  document.addEventListener('selectionchange', debounce(() => {
+    if (!state.data) return;
+    const picked = phraseSelection();
+    if (!picked) {
+      if (state.phrase) {
+        state.phrase = null;
+        showSelection();
+      }
+      return;
+    }
+    const { verse, quote } = picked;
+    state.phrase = { verse, quote };
+    if (!(state.selection.length === 1 && state.selection[0] === verse)) {
+      state.selection = [verse];
+      state.anchor = verse;
+    }
+    showSelection();
+  }, 300));
 
   document.addEventListener('copy', (event) => {
     if (pendingCopy) {

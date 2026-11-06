@@ -23,7 +23,7 @@ export const DEFAULTS = {
   videos: null,
   panel: null,
   searchScope: 'module',
-  library: { tab: 'passage', commentary: null, dictionary: null, book: null },
+  library: { tab: 'passage', commentary: null, commentaries: [], dictionary: null, book: null },
   print: { paper: 'a4', size: 11, numbers: true, headings: true, editionNotes: false, myNotes: false },
   interlinear: false,
   original: { greekAccents: true, hebrewPoints: true, hebrewAccents: true },
@@ -67,6 +67,7 @@ export function normalise(raw = {}) {
     for (const key of ['commentary', 'dictionary', 'book']) {
       if (typeof raw.library[key] === 'string') s.library[key] = raw.library[key];
     }
+    if (Array.isArray(raw.library.commentaries)) s.library.commentaries = raw.library.commentaries.filter((c) => typeof c === 'string').slice(0, 4);
   }
   if (raw.print && typeof raw.print === 'object') {
     if (PAPERS[raw.print.paper]) s.print.paper = raw.print.paper;

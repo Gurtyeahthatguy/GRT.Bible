@@ -71,7 +71,7 @@ for folder in pack_dirs:
         else:
             rows = db.execute('select id, parent, key, title, body from entries order by id').fetchall()
             all_spans = db.execute('select entry, first, last from spans').fetchall()
-            keep = {e for e, a, b in all_spans if inside(a)} if kind == 'commentary' else {r[0] for r in rows[:400]}
+            keep = {e for e, a, b in all_spans if inside(a)} if kind == 'commentary' else {r[0] for r in rows[:400]} | {e for e, a, b in all_spans if inside(a)}
             pack['entries'] = [dict(id=i, parent=p, key=k, title=t, body=b) for i, p, k, t, b in rows if i in keep]
             pack['spans'] = [dict(entry=e, first=a, last=b) for e, a, b in all_spans if e in keep]
         packs.append(pack)
@@ -81,6 +81,18 @@ with open(out, 'w') as f:
     f.write('window.__PREVIEW_GUIDE__ = ' + json.dumps((modules_dir.parent / 'MODULES.md').read_text(), ensure_ascii=False) + ';\n')
     f.write('window.__PREVIEW_VIDEOS__ = ' + json.dumps(dict(channels=channels, videos=videos), ensure_ascii=False) + ';\n')
 EXPORT
+
+# The calendar and the plans are computed by the converter, when it is built.
+CONVERT="$ROOT/target/release/grtb-convert"
+if [[ -x "$CONVERT" ]]; then
+  {
+    printf 'window.__PREVIEW_LITURGY__ = {'
+    "$CONVERT" liturgy "$(date -d '-30 days' +%F)" --to "$(date -d '+60 days' +%F)" | python3 -c 'import sys, json; print(",".join(json.dumps(json.loads(l)["date"]) + ":" + l.strip() for l in sys.stdin))'
+    printf '};\nwindow.__PREVIEW_PLANS__ = '
+    "$CONVERT" plans plans
+    printf ';\n'
+  } >> "$STAGE/preview-data.js"
+fi
 
 python3 - "$STAGE/index.html" <<'PATCH'
 import sys, pathlib, re

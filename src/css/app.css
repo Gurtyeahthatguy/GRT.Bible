@@ -251,6 +251,42 @@ kbd {
   min-height: 0;
 }
 
+.panel.wide { width: min(820px, 64vw); max-width: 64vw; }
+.commentary-columns.several { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: start; }
+.commentary-column { min-width: 0; }
+.commentary-head { align-items: center; gap: 6px; margin-bottom: 6px; }
+.commentary-head .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-list { line-height: 1.9; }
+
+.liturgy { margin-bottom: 18px; }
+.liturgy h3 { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.liturgy-nav { align-items: center; gap: 4px; }
+.liturgy-nav .grow { flex: 1; text-align: center; font-weight: 600; }
+.liturgy .mass h4 { margin: 12px 0 4px; font-size: 13px; }
+.readings { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 8px 0; }
+.readings dt { color: var(--text-dim); font-size: 13px; padding-top: 2px; }
+.readings dd { margin: 0; }
+.readings .preview { grid-column: 1 / -1; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); flex: none; }
+.colour-white { background: #f4f1e8; }
+.colour-red { background: #b3261e; }
+.colour-green { background: #2e7d32; }
+.colour-purple { background: #6a3d8f; }
+.colour-rose { background: #d98fa8; }
+.colour-black { background: #222; }
+.liturgy-videos { margin-top: 10px; }
+pre.notice { white-space: pre-wrap; max-height: 40vh; overflow-y: auto; font-size: 11px; }
+
+mark.note-phrase { background: none; text-decoration: underline dotted var(--accent); text-underline-offset: 3px; color: inherit; }
+.note-quote { font-style: italic; margin: 4px 0; }
+.note-tags { width: 100%; margin-top: 6px; }
+.tags .tag { margin-right: 6px; }
+.plan progress { width: 100%; }
+.plan-days { padding-left: 0; list-style: none; max-height: 50vh; overflow-y: auto; }
+.plan-days li { padding: 2px 0; }
+.plan-list { list-style: none; padding: 0; }
+.plan-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+
 .panel-head {
   display: flex;
   justify-content: space-between;
@@ -694,6 +730,7 @@ kbd {
     width: auto;
     border-left: none;
   }
+  .panel.wide { width: auto; max-width: none; }
   .panel-head { padding: 6px 8px 6px 16px; }
   .panel-body { padding: 12px 16px 32px; }
 

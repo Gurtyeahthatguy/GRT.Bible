@@ -4,18 +4,21 @@ A Bible reader for the 73-book Catholic canon that runs on your own computer.
 
 - **Offline.** Reading, search, parallel reading, notes and highlights need no
   network.
-- **Nothing social.** No account, no sharing, no reading plans, no streaks.
+- **Nothing social.** No account, no sharing, no streaks. Reading plans
+  keep no score.
 - **Public domain texts inside.** Other translations can be imported from files
   you already have; study packs published beside the program say their own
   licence.
 - **Study material from files.** Commentaries, cross-references, dictionaries
   and books install from a file, and appear beside the verse you are reading.
+- **The day's liturgy.** The Roman calendar of Italy, computed offline, with
+  the readings of each Mass opened in any installed translation.
 - **Greek and Hebrew word by word.** With the original-language packs, every
   word shows its lemma, transliteration, gloss, morphology and Strong's number,
   and every lemma can be studied and searched.
 - **Your data is one file.** Position, history, notes, highlights, bookmarks,
-  saved videos and video lists live in a single `.grt` file you can copy
-  anywhere.
+  reading plans, saved videos and video lists live in a single `.grt` file you
+  can copy anywhere.
 
 Ready-made programs for Linux, Windows and Android are attached to each release.
 Building and installing: [INSTALL.md](INSTALL.md).
@@ -69,6 +72,11 @@ Attached to each release as separate files, installed from the library:
 | `BDB.grtb` | Brown-Driver-Briggs, Hebrew and English lexicon, 11,845 entries | `openscriptures/HebrewLexicon` | Text public domain; transcription CC BY 4.0, Open Scriptures Hebrew Bible Project |
 | `STRONGG.grtb`, `STRONGH.grtb` | Strong's Greek and Hebrew dictionaries | CrossWire `StrongsGreek` 2.0, `StrongsHebrew` 1.2 | Public domain |
 | `ABBOTT.grtb` | Abbott-Smith, Manual Greek Lexicon of the New Testament | CrossWire `AbbottSmith` 4.1 | Public domain |
+| `HAYDOCK.grtb` | Commentary: Haydock's Catholic Bible Commentary, 1859, on every book | `CodeBlue519/drb`, `commentary/haydock.tsv` | Public domain |
+| `CATENA.grtb` | Commentary: Thomas Aquinas, Catena Aurea on the four Gospels, Newman's translation of 1841 | `HistoricalChristianFaith/Commentaries-Database` | Public domain |
+| `FATHERS.grtb` | Commentary: the Fathers on Scripture, excerpts from the Ante-Nicene and Nicene and Post-Nicene Fathers | `HistoricalChristianFaith/Commentaries-Database` | Public domain |
+| `EASTON.grtb`, `SMITH.grtb` | Dictionaries: Easton's Bible Dictionary, 1897, and Smith's, 1884 | CrossWire `Easton` 2.0.1, `Smith` 1.3 | Public domain |
+| `NAVE.grtb` | Topical index: Nave's Topical Bible, 1896 | CrossWire `Nave` 3.0 | Public domain |
 
 The program and the eight translations inside it are MIT and public domain.
 The packs are separate files; three of them carry Creative Commons licences,
@@ -76,6 +84,12 @@ which ask that their authors be named, and `SBLGNT.grtb` is shared under the
 same licence as its parsing. Each module states its licence, and the library
 shows it. The exact commits the packs were built from are listed in
 `scripts/convert-packs.sh`.
+
+The Fathers come from a database that also holds recent translations under a
+claim of fair use. `FATHERS.grtb` keeps only the excerpts taken from the
+nineteenth-century Ante-Nicene and Nicene and Post-Nicene series, as published
+by New Advent and CCEL, and `CATENA.grtb` only Newman's Catena Aurea; the rest
+is left out.
 
 [MODULES.md](MODULES.md) explains, step by step, how to install these and any
 SWORD or USFM module on Linux, Windows and Android.
@@ -147,17 +161,43 @@ and an export of the occurrences that GRT Grid opens with Import CSV.
 Greek accents and breathings, Hebrew vowel points and cantillation marks can
 each be turned off in Settings.
 
-**Study** holds the verse of the day, your notes, highlights, bookmarks and
-history. The file is `user.grt` in the program's data folder; Settings exports
-and imports it. Notes also export as one Markdown file, with front matter, that
-GRT Notes and other Markdown notebooks open.
+**Study** holds the day's liturgy and the verse of the day, your notes,
+reading plans, highlights, bookmarks and history. The file is `user.grt` in the
+program's data folder; Settings exports and imports it.
+
+**Today** shows the day in the Roman calendar with the proper of Italy: the
+celebration, its rank and colour, the season and the cycles, and the
+references of each Mass, the evening Mass of a vigil included. Each reference
+opens in the translation you are reading, and the arrows move a day at a time.
+The calendar is computed in the program: Easter and the feasts that follow it,
+the transfers of solemnities, the patrons of Italy and of Europe as feasts.
+With the video section on, the videos about the day's Gospel are listed
+beneath.
+
+**Notes** belong to a verse or, when you select some words inside one verse
+before choosing Note, to those words, which are then underlined. In another
+translation the note stays on the verse, and says so when the words are not
+there. Notes take tags and links to other notes, which show both ways, and the
+search above them finds words, places and `#tags`. They export as one Markdown
+file that GRT Notes and other Markdown notebooks open; each note carries a
+hidden marker, so the file edited there comes back with **Import…** and
+updates text, tags and links.
+
+**Plans** reads the whole Bible in one or two years, the New Testament in 90
+days, the Gospels in 40 or the Psalms in 30, cut where the verses even out.
+Each day is ticked by hand. **Send to Dates…** writes the plan as one task a
+day in an `.ics` file that GRT Dates opens; tick the tasks there, and **Update
+from Dates…** reads the same file back and marks those days read.
 
 **Library** shows what the installed material says about the selected verse,
 or the first one in view: its cross-references, each opening a preview of the
-passage in your translation, and the chosen commentary, which steps from one
-comment to the next. Dictionaries are looked up by headword, books read by
-section, and the **Installed** tab lists every module with its kind, language,
-licence, source and the file it came from.
+passage in your translation, and the chosen commentaries, up to four side by
+side, each stepping from one comment to the next. Below them, **In the
+dictionaries** lists the entries of Easton, Smith or Nave that cite the verse.
+Dictionaries are looked up by headword; a lexicon numbered by Strong also by
+`G26`, by `26` or by the Greek word. Books are read by section, and the
+**Installed** tab lists every module with its kind, language, licence, source
+and the file it came from.
 
 **Print** lays the chapter, the selected verses, the comparison or all your
 notes on pages of a fixed size, A4, A5 or Letter, with a header of our own and
@@ -211,7 +251,9 @@ teaching of the Church, from the sacraments and Mary to the papacy and moral
 questions; **Theology** everything else. The sorting reads titles, so a video
 can land in the wrong place: change its `category` in `catalog/catalog.json`
 and the correction survives the next refresh. A video whose title names a
-passage, such as "James 2", also appears on that chapter.
+passage, such as "James 2", also appears on that chapter. Finer topics, such as
+Scripture, Mary and the saints, the sacraments or the moral life, are read from
+the titles as well, and filter the list.
 
 Any video can be linked to the verses you have selected, and then shows as a
 small mark beside them; videos can also be kept in lists of your own. Both are
@@ -277,12 +319,22 @@ checks the binary, the packages built here and each study pack against
 and reads from each, and checks the time and memory that took.
 
 ```bash
+python3 -I scripts/check-lectionary.py <folder of pages>
+```
+
+compares the computed lectionary with the daily pages of the Italian bishops'
+conference, saved from chiesacattolica.it/liturgia-del-giorno as `YYYYMMDD.html`.
+For the liturgical year from Advent 2025 to Advent 2026, the readings agree on
+all 348 days the site shows; 8 pages carry another day's readings, a slip of
+the site, and 8 have none. The pages are not in the repository.
+
+```bash
 cargo test --workspace
 npm test
 ./scripts/preview.sh
 ```
 
-178 tests cover the reference parser, the versification tables, the module and
+207 tests cover the reference parser, the versification tables, the module and
 user file formats, the SWORD readers for every kind of module, the morphology
 codes and the search grammar, archives and markup built to break the importer,
 and the interface running against a stubbed backend. One of them counts forms
@@ -300,8 +352,9 @@ without building.
 - The Septuagint stops where Brenton's text stops, and Nestle 1904 is the New
   Testament alone. What a translation lacks is listed and greyed out rather than
   hidden.
-- A note, a highlight and a bookmark belong to a verse, not to a phrase inside
-  it.
+- A highlight and a bookmark belong to a verse. A note can belong to words
+  inside one verse; in another translation, where other words are used, it
+  stays on the verse.
 - Search covers the translations, not commentaries, dictionaries or books.
 - The Hebrew text shows the qere where a word is written one way and read
   another; the ketiv is not shown.
@@ -311,10 +364,22 @@ without building.
   are short: Brown-Driver-Briggs has the full entry.
 - The video catalog is sorted by reading titles, so a video sits in the wrong
   category until someone corrects it.
+- The calendar is that of Italy, with the Epiphany on 6 January and the
+  Ascension and Corpus Christi on Sunday. Readings are those of the Lectionary
+  of 1981 as the Lectio project lists them, with the Italian Lectionary's own
+  readings for three Marian memorials and the three Masses of All Souls. Where
+  the Italian Lectionary adds a verse at the start, as Ez 33:1 before 33:7-9,
+  the reference here leaves it out. Optional memorials keep the weekday's
+  readings, and offer their own where they have them.
+- Only the Mass is covered. The psalms of the Liturgy of the Hours are not:
+  no free source lists the four-week psalter.
 
 ## Licence
 
 MIT. See [LICENSE](LICENSE). The texts are in the public domain. The
 versification data derived from Paratext is MIT, United Bible Societies; the
 chapter and verse counts the SWORD importer needs were read from CrossWire's
-canon tables. The study packs' licences are listed under Study packs.
+canon tables. The study packs' licences are listed under Study packs. The
+calendar and lectionary data in `crates/grtb/data/liturgy.json` come from the
+Liturgical Calendar API, Apache-2.0, and from Lectio, MIT; their notices are in
+[crates/grtb/data/LITURGY-NOTICE.txt](crates/grtb/data/LITURGY-NOTICE.txt).

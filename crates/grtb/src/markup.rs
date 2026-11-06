@@ -136,6 +136,21 @@ pub fn tokens(input: &str) -> Vec<Token<'_>> {
     out
 }
 
+/// The verses a piece of markup links to, each range once and in order.
+pub fn cited_ranges(markup: &str) -> Vec<(Ref, Ref)> {
+    let mut out: Vec<(Ref, Ref)> = Vec::new();
+    for token in tokens(markup) {
+        if let Token::Tag { raw_name: "a", closing: false, attrs, .. } = token {
+            if let Some(target) = attr(attrs, "data-ref") {
+                out.extend(crate::passage::parse_osis(&target));
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Elements that never hold anything, written with or without the closing slash.
 const VOID: [&str; 10] = ["br", "hr", "img", "lb", "sync", "milestone", "meta", "link", "input", "wbr"];
 

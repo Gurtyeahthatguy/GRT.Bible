@@ -28,3 +28,8 @@ http://www.ibm.com/data/dtd
 # Addresses MODULES.md gives the reader, shown as text in the guide and never opened.
 https://www.crosswire.org
 https://ebible.org
+
+# Where the calendar data comes from, and the licence it carries, shown as text and never opened.
+https://github.com/Liturgical-Calendar/LiturgicalCalendarAPI
+https://github.com/nyabongo/lectio
+http://www.apache.org/licenses/

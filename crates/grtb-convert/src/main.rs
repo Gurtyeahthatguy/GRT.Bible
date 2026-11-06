@@ -1,6 +1,7 @@
 //! Builds `.grtb` modules and the video catalog package.
 
 mod bdb;
+mod commentary;
 mod martini;
 mod morphgnt;
 mod n1904;
@@ -27,6 +28,12 @@ Usage:
   grtb-convert morphgnt <folder> --lexemes <lexemes.yaml> [options] -o <out.grtb>
   grtb-convert oshb    <folder> --index <LexicalIndex.xml> --aug <AugIndex.xml> [options] -o <out.grtb>
   grtb-convert bdb     <BrownDriverBriggs.xml> --index <LexicalIndex.xml> [options] -o <out.grtb>
+  grtb-convert haydock <haydock.tsv>      [options] -o <out.grtb>
+  grtb-convert fathers <commentaries.sqlite> --excerpts catena|fathers [options] -o <out.grtb>
+  grtb-convert liturgy <YYYY-MM-DD> --to <YYYY-MM-DD>
+                       prints the liturgical day and readings of each date as a line of JSON
+  grtb-convert plans  plans
+                       prints every reading plan, day by day, as JSON
   grtb-convert catalog <folder>                    -o <out.grt>
   grtb-convert info    <module.grtb>
   grtb-convert measure <folder> [--packs <folder>]
@@ -226,6 +233,46 @@ fn run() -> Result<(), String> {
             let content = assemble_resource(&description(&args)?, "dictionary", entries, Vec::new(), vec!["HebrewDef".into()], &generation_date(&args), &sha256_hex(&xml));
             module::write(output, &content)?;
             println!("{}: dictionary with {} entries", output.display(), content.entries.len());
+            Ok(())
+        }
+        "haydock" | "fathers" => {
+            let (entries, hash) = if args.command == "haydock" {
+                let tsv = std::fs::read(&args.input).map_err(|e| e.to_string())?;
+                (commentary::haydock(&String::from_utf8_lossy(&tsv))?, sha256_hex(&tsv))
+            } else {
+                let which = match args.options.get("excerpts").map(String::as_str) {
+                    Some("catena") => commentary::Excerpts::Catena,
+                    Some("fathers") => commentary::Excerpts::Fathers,
+                    _ => return Err("--excerpts must be catena or fathers".into()),
+                };
+                let bytes = std::fs::read(&args.input).map_err(|e| e.to_string())?;
+                (commentary::fathers(&args.input, which)?, sha256_hex(&bytes))
+            };
+            let output = args.output.as_ref().ok_or("-o is required")?;
+            let content = assemble_resource(&description(&args)?, "commentary", entries, Vec::new(), Vec::new(), &generation_date(&args), &hash);
+            module::write(output, &content)?;
+            println!("{}: commentary with {} entries", output.display(), content.entries.len());
+            Ok(())
+        }
+        "liturgy" => {
+            let parse = |text: &str| grtb::liturgy::parse_date(text).ok_or_else(|| format!("not a date: {text}"));
+            let from = parse(&args.input.to_string_lossy())?;
+            let to = parse(args.options.get("to").ok_or("--to is required")?)?;
+            for n in from..=to {
+                let (y, m, d) = grtb::liturgy::civil_from_days(n);
+                println!("{}", serde_json::to_string(&grtb::liturgy::day(y, m, d)).map_err(|e| e.to_string())?);
+            }
+            Ok(())
+        }
+        "plans" => {
+            let all: serde_json::Map<String, serde_json::Value> = grtb::plans::PLANS
+                .iter()
+                .map(|p| {
+                    let days: Vec<Vec<String>> = p.schedule().into_iter().map(|d| d.into_iter().map(|(a, b)| module::range_osis(a, b)).collect()).collect();
+                    (p.id.to_string(), serde_json::json!({ "title": p.title, "days": days }))
+                })
+                .collect();
+            println!("{}", serde_json::Value::Object(all));
             Ok(())
         }
         "measure" => measure(&args.input, args.options.get("packs").map(PathBuf::from)),

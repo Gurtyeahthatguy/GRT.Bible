@@ -132,7 +132,9 @@ jobs:
             echo
             echo "The \`.grtb\` files are study packs, installed from the library:"
             echo "cross-references, the Greek New Testament and the Hebrew Bible word"
-            echo "by word, and Greek and Hebrew lexicons. MODULES.md in the repository"
+            echo "by word, Greek and Hebrew lexicons, the commentaries of Haydock, the"
+            echo "Catena Aurea and the Fathers, and the dictionaries of Easton, Smith"
+            echo "and Nave. MODULES.md in the repository"
             echo "explains every step on every system. The program is MIT; three packs"
             echo "carry Creative Commons licences, named in each module and in the README."
             echo

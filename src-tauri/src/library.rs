@@ -728,6 +728,27 @@ mod tests {
     }
 
     #[test]
+    fn the_commentaries_and_dictionaries_follow_the_verse() {
+        let Some(lib) = with_packs() else { return };
+        let at = grtb::Ref::parse("John.3.16").unwrap();
+        for name in ["HAYDOCK", "CATENA"] {
+            let entries = lib.get(name).unwrap().with(|m| m.entries_at(at)).unwrap();
+            assert!(!entries.is_empty(), "{name} says nothing on John 3:16");
+        }
+        let catena = lib.get("CATENA").unwrap().with(|m| m.entries_at(at)).unwrap();
+        assert!(catena.iter().any(|e| e.body.contains("Hilary of Poitiers")));
+        // Haydock numbers the Psalms as the Vulgate; its note on "The Lord ruleth me" is on Psalm 23.
+        let shepherd = lib.get("HAYDOCK").unwrap().with(|m| m.entries_at(grtb::Ref::parse("Ps.23.1").unwrap())).unwrap();
+        assert!(shepherd.iter().any(|e| e.body.contains("David")), "{:?}", shepherd.iter().map(|e| &e.body[..60.min(e.body.len())]).collect::<Vec<_>>());
+        let nave = lib.get("NAVE").unwrap().with(|m| m.entries_citing(at, 60)).unwrap();
+        assert!(nave.iter().any(|h| h.title == "FAITH"), "{:?}", nave.iter().map(|h| &h.title).collect::<Vec<_>>());
+        let easton = lib.get("EASTON").unwrap().with(|m| m.entries_citing(at, 60)).unwrap();
+        assert!(easton.iter().any(|h| h.title == "NICODEMUS"));
+        // Lexicons of words are not listed by the verses they cite.
+        assert!(lib.get("STRONGG").unwrap().with(|m| m.entries_citing(at, 60)).unwrap().is_empty());
+    }
+
+    #[test]
     fn the_original_language_packs_read_word_by_word() {
         let Some(lib) = with_packs() else { return };
         let sbl = lib.bible("SBLGNT").unwrap();
@@ -752,6 +773,15 @@ mod tests {
         let only = word_study(&oshb, "H1254", &fat.lemma, &fat.gloss, &[]).unwrap();
         assert!(only.total < create.total, "{} of {}", only.total, create.total);
         assert!(create.lexicon.iter().any(|l| l.module == "BDB" && grtb::text::fold(&l.entry.key, "hbo") == "ברא"), "{:?}", create.lexicon.iter().map(|l| &l.entry.key).collect::<Vec<_>>());
+
+        // A lexicon numbered by Strong is found by number, by G number and by its Greek word.
+        let strong = lib.get("STRONGG").unwrap();
+        let titles = |q: &str| strong.with(|m| m.lookup(q, 5)).unwrap().into_iter().map(|h| h.title).collect::<Vec<_>>();
+        assert_eq!(titles("G26")[0], "G26 ἀγάπη");
+        assert_eq!(titles("26")[0], "G26 ἀγάπη");
+        assert!(titles("αγαπη").contains(&"G26 ἀγάπη".to_string()));
+        assert_eq!(titles("agape")[0], "G26 ἀγάπη");
+        assert_eq!(strong.with(|m| m.entry_by_key("26")).unwrap().unwrap().key, "00026");
 
         let node = grtb::query::parse("G25 NEAR/3 G2316").unwrap();
         let found = advanced_search(&[sbl.clone()], &node, &[], 0, 50).unwrap();
