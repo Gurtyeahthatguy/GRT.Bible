@@ -7,8 +7,13 @@
 #   openscriptures/HebrewLexicon     21c9add13bc727d3a951361778e97e3ff7afd1ce  -> sources/hebrew-lexicon/
 #   CodeBlue519/drb                  09d0e9dd810fb305eda529561be964dea0b3f42a  -> sources/haydock/haydock.tsv (commentary/haydock.tsv)
 #   HistoricalChristianFaith/Commentaries-Database, release "latest" of 6 Nov 2026 -> sources/hcf/commentaries.sqlite
+#   LogosBible/SBLGNT                d7f35adca9ec410e1d1499c63b4dd989d76c8d4d  -> sources/sblgntapp/*.txt (data/sblgntapp/text)
+#   adamb924/eusebian-canons         ad27f9cbe78017cea7864b5eedf17a6b48260677  -> sources/eusebius/ (data/*-sections-aligned.txt, canon-*.txt)
+#   robertrouse/theographic-bible-metadata 014222af2416edffb8ae10be783e68b009692b49 -> sources/theographic/ (CSV/Places.csv, Events.csv)
+#   nvkelso/natural-earth-vector     ca96624a56bd078437bca8184e78163e5039ad19  -> sources/naturalearth/ (three geojson files)
 # and the CrossWire modules TSK, StrongsGreek, StrongsHebrew and AbbottSmith in sources/packs/,
-# Easton, Smith and Nave in sources/dicts/.
+# Easton, Smith and Nave in sources/dicts/. Packs are signed with the key in GRT_SIGNING_KEY,
+# ~/.config/grt/pack-signing.key by default, which never leaves this machine.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -89,5 +94,28 @@ DICTS="$SOURCES/dicts"
   --id eng-nave --abbreviation NAVE --title "Nave's Topical Bible" \
   --language en --year 1896 --license "Public domain" --date 2026-11-06 \
   --source "CrossWire SWORD module Nave, version 3.0" -o "$OUT/NAVE.grtb"
+
+"$BIN" apparatus "$SOURCES/sblgntapp" \
+  --id grc-sblgnt-apparatus --abbreviation SBLGNTAPP --title "Apparatus for the SBL Greek New Testament" \
+  --language grc --year 2010 --versification hebrew --license "CC BY 4.0, Society of Biblical Literature and Logos Bible Software" --date 2026-11-14 \
+  --source "github.com/LogosBible/SBLGNT, data/sblgntapp" -o "$OUT/SBLGNTAPP.grtb"
+
+"$BIN" harmony "$SOURCES/eusebius" \
+  --id grc-eusebian-canons --abbreviation EUSEBIUS --title "The Eusebian Canons, a harmony of the Gospels" \
+  --language en --versification hebrew --license "Public domain" --date 2026-11-14 \
+  --source "github.com/adamb924/eusebian-canons, from the tables of Kevin P. Edgecomb" -o "$OUT/EUSEBIUS.grtb"
+
+python3 -I "$ROOT/scripts/build-atlas.py" "$SOURCES"
+"$BIN" atlas "$SOURCES/atlas.json" \
+  --id eng-theographic-atlas --abbreviation ATLAS --title "Places and events of the Bible" \
+  --language en --versification hebrew --license "CC BY-SA 4.0, Theographic; map outlines from Natural Earth, public domain" --date 2026-11-14 \
+  --source "github.com/robertrouse/theographic-bible-metadata and Natural Earth" -o "$OUT/ATLAS.grtb"
+
+KEY="${GRT_SIGNING_KEY:-$HOME/.config/grt/pack-signing.key}"
+if [[ -f "$KEY" ]]; then
+  for pack in "$OUT"/*.grtb; do "$BIN" sign "$pack" --key "$KEY"; done
+else
+  echo "No signing key at $KEY: the packs are left unsigned." >&2
+fi
 
 ls -la "$OUT"

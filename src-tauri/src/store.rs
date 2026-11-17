@@ -51,7 +51,11 @@ impl Store {
         match UserData::from_archive(&bytes) {
             Ok(data) => (data, None),
             Err(e) => {
-                let aside = self.user_file.with_extension("grt.unreadable");
+                // An earlier unreadable file is never overwritten.
+                let aside = (0..1000)
+                    .map(|n| self.user_file.with_extension(if n == 0 { "grt.unreadable".to_string() } else { format!("grt.unreadable.{n}") }))
+                    .find(|p| !p.exists())
+                    .unwrap_or_else(|| self.user_file.with_extension("grt.unreadable"));
                 let _ = fs::rename(&self.user_file, &aside);
                 (UserData::default(), Some(format!("Your data file could not be read ({e}). It was kept as {}.", aside.display())))
             }
@@ -115,6 +119,10 @@ mod tests {
         assert_eq!(data, UserData::default());
         assert!(message.unwrap().contains("could not be read"));
         assert!(dir.path().join("user.grt.unreadable").exists());
+        fs::write(&s.user_file, b"broken again").unwrap();
+        s.load_user();
+        assert_eq!(fs::read(dir.path().join("user.grt.unreadable")).unwrap(), b"not a zip");
+        assert_eq!(fs::read(dir.path().join("user.grt.unreadable.1")).unwrap(), b"broken again");
     }
 
     #[test]

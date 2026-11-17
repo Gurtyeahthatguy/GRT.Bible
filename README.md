@@ -77,11 +77,14 @@ Attached to each release as separate files, installed from the library:
 | `FATHERS.grtb` | Commentary: the Fathers on Scripture, excerpts from the Ante-Nicene and Nicene and Post-Nicene Fathers | `HistoricalChristianFaith/Commentaries-Database` | Public domain |
 | `EASTON.grtb`, `SMITH.grtb` | Dictionaries: Easton's Bible Dictionary, 1897, and Smith's, 1884 | CrossWire `Easton` 2.0.1, `Smith` 1.3 | Public domain |
 | `NAVE.grtb` | Topical index: Nave's Topical Bible, 1896 | CrossWire `Nave` 3.0 | Public domain |
+| `SBLGNTAPP.grtb` | The apparatus of the SBLGNT: 6,934 places where Westcott-Hort, Tregelles, the NIV's Greek, Robinson-Pierpont or Nestle-Aland read otherwise | `LogosBible/SBLGNT`, `data/sblgntapp` | CC BY 4.0, Society of Biblical Literature and Logos Bible Software |
+| `EUSEBIUS.grtb` | The Eusebian canons: the sections of the Gospels and the ten tables of parallels | `adamb924/eusebian-canons`, from the tables of Kevin P. Edgecomb | Public domain |
+| `ATLAS.grtb` | 1,261 places with their position and verses, 490 dated events, and the outline of the lands from Spain to Persia | `robertrouse/theographic-bible-metadata`; outlines from Natural Earth | CC BY-SA 4.0, Theographic; outlines public domain |
 
 The program and the eight translations inside it are MIT and public domain.
-The packs are separate files; three of them carry Creative Commons licences,
-which ask that their authors be named, and `SBLGNT.grtb` is shared under the
-same licence as its parsing. Each module states its licence, and the library
+The packs are separate files; five of them carry Creative Commons licences,
+which ask that their authors be named, and `SBLGNT.grtb` and `ATLAS.grtb` are
+shared under the same licence as their sources. Each module states its licence, and the library
 shows it. The exact commits the packs were built from are listed in
 `scripts/convert-packs.sh`.
 
@@ -90,6 +93,11 @@ claim of fair use. `FATHERS.grtb` keeps only the excerpts taken from the
 nineteenth-century Ante-Nicene and Nicene and Post-Nicene series, as published
 by New Advent and CCEL, and `CATENA.grtb` only Newman's Catena Aurea; the rest
 is left out.
+
+Every pack is signed with a key that stays on the machine that builds them.
+The library checks the signature when a pack is installed: a pack changed after
+it was signed is refused, and an unsigned or unknown one is installed and says
+so. The public key, `4f4d 552e 5af3 eacd`, is in `crates/grtb/src/signing.rs`.
 
 [MODULES.md](MODULES.md) explains, step by step, how to install these and any
 SWORD or USFM module on Linux, Windows and Android.
@@ -141,6 +149,15 @@ carries the quotation as HTML, which GRT Paper pastes as a quote with its
 reference.
 
 **Compare** puts up to four translations side by side, aligned verse by verse.
+With **Differences** on, the words where a translation parts from the first
+column are marked, in translations of the same language: Martini against
+Riveduta, Douay-Rheims against the World English Bible, Nestle 1904 against the
+SBLGNT.
+
+**Keyboard.** Tab reaches every control; the arrow keys turn the chapter, or,
+with a verse selected, move the selection, and Shift stretches it. Enter selects
+the verse at the top of the page. In the panels the arrow keys move between
+tabs.
 
 **Search** matches words without regard to case, accents, Greek breathings or
 Hebrew points. Quotes keep a phrase together. In a module with tagged words it
@@ -194,10 +211,23 @@ or the first one in view: its cross-references, each opening a preview of the
 passage in your translation, and the chosen commentaries, up to four side by
 side, each stepping from one comment to the next. Below them, **In the
 dictionaries** lists the entries of Easton, Smith or Nave that cite the verse.
+With the packs installed, the same tab shows how the verse is numbered in each
+translation when the numbers differ, the variants of the Greek editions behind
+a New Testament verse, the parallel passages of the other Gospels side by side
+in your translation, and the places named in the chapter. **Study sheet…** puts
+the passage, your notes on it, the commentaries shown, the variants and, for up
+to ten verses, the Greek or Hebrew words on printable pages, and **Send to
+Paper…** saves the same sheet as a `.fodt` document that GRT Paper opens.
+**Send to Graphs…** saves the verse and its cross-references as a canvas that
+GRT Graphs opens; the Notes tab does the same for your notes and their links.
+
 Dictionaries are looked up by headword; a lexicon numbered by Strong also by
-`G26`, by `26` or by the Greek word. Books are read by section, and the
-**Installed** tab lists every module with its kind, language, licence, source
-and the file it came from.
+`G26`, by `26` or by the Greek word. **Map** shows the places of the chapter
+on an outline of the lands of the Bible, from Spain to Persia; a place opens
+with every verse that names it, and any place can be found by name. **Timeline**
+lists the dated events of the Bible in order and marks those of the chapter.
+Books are read by section, and the **Installed** tab lists every module with
+its kind, language, licence, source, the file it came from and who signed it.
 
 **Print** lays the chapter, the selected verses, the comparison or all your
 notes on pages of a fixed size, A4, A5 or Letter, with a header of our own and
@@ -334,7 +364,7 @@ npm test
 ./scripts/preview.sh
 ```
 
-207 tests cover the reference parser, the versification tables, the module and
+222 tests cover the reference parser, the versification tables, the module and
 user file formats, the SWORD readers for every kind of module, the morphology
 codes and the search grammar, archives and markup built to break the importer,
 and the interface running against a stubbed backend. One of them counts forms
@@ -356,6 +386,19 @@ without building.
   inside one verse; in another translation, where other words are used, it
   stays on the verse.
 - Search covers the translations, not commentaries, dictionaries or books.
+- The apparatus is that of the SBLGNT: it sets editions side by side, not
+  manuscripts. Tischendorf's apparatus, which names the manuscripts, has no
+  free digital edition.
+- The places come from Theographic, which takes most positions from
+  OpenBible.info; many are rough, and some are disputed. The dates of the
+  timeline follow a traditional chronology built from the Bible, close to
+  Ussher's, and are not those of most historians for the earlier periods.
+- The Eusebian canons come as Kevin P. Edgecomb typed them: 15 of the 1,169
+  sections are missing from the tables or sit in another canon, among them
+  Matthew 5:2-3, so those verses show no parallels.
+- Differences are marked word by word between translations of one language;
+  between languages the comparison is left to the reader.
+- The study sheet adds the words of the original only for up to ten verses.
 - The Hebrew text shows the qere where a word is written one way and read
   another; the ketiv is not shown.
 - Thayer's Greek lexicon is not among the packs: CrossWire does not publish it.

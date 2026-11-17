@@ -17,6 +17,9 @@ pack                packs/FATHERS.grtb                                          
 pack                packs/EASTON.grtb                                                                 5600000
 pack                packs/SMITH.grtb                                                                  5200000
 pack                packs/NAVE.grtb                                                                   8200000
+pack                packs/SBLGNTAPP.grtb                                                              1200000
+pack                packs/EUSEBIUS.grtb                                                                300000
+pack                packs/ATLAS.grtb                                                                   900000
 open_ms             modules and packs opened                                                             250
 read_ms             chapters, words, searches and lookups in each                                       1500
 peak_kb             memory of the reading above                                                        65536

@@ -19,6 +19,9 @@ const PREFERRED: [&str; 8] = ["VUL", "MAR", "WEBC", "DRA", "RIV", "LXX", "N1904"
 pub struct Origin {
     pub file: String,
     pub installed: String,
+    /// The signature found when the pack was installed or last checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<grtb::signing::Seal>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -746,6 +749,33 @@ mod tests {
         assert!(easton.iter().any(|h| h.title == "NICODEMUS"));
         // Lexicons of words are not listed by the verses they cite.
         assert!(lib.get("STRONGG").unwrap().with(|m| m.entries_citing(at, 60)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_packs_of_variants_parallels_and_places_answer_and_are_signed() {
+        let Some(lib) = with_packs() else { return };
+        let r = |t: &str| grtb::Ref::parse(t).unwrap();
+        let variants = lib.get("SBLGNTAPP").unwrap().with(|m| m.entries_at(r("John.1.18"))).unwrap();
+        let line = variants.iter().find(|e| !e.spans.is_empty()).unwrap();
+        assert!(line.body.contains("<b>μονογενὴς θεὸς</b>") && line.body.contains("ὁ μονογενὴς υἱός <i>RP</i>"), "{}", line.body);
+        // The baptism of Jesus stands in the first canon, told by all four.
+        let rows = lib.get("EUSEBIUS").unwrap().with(|m| m.entries_at(r("Matt.3.16"))).unwrap();
+        assert!(rows.iter().any(|e| e.title.starts_with("Canon I ·") && e.spans.contains(&"John.1.32-John.1.34".to_string())), "{:?}", rows.iter().map(|e| &e.title).collect::<Vec<_>>());
+        let atlas = lib.get("ATLAS").unwrap();
+        let places = atlas.with(|m| m.places_in(r("Gen.12.0"), r("Gen.12.999"))).unwrap();
+        let names: Vec<&str> = places.iter().map(|p| p.title.as_str()).collect();
+        for name in ["Bethel", "Haran", "Egypt"] {
+            assert!(names.iter().any(|n| n.starts_with(name)), "{name} not in {names:?}");
+        }
+        let jerusalem = atlas.with(|m| m.place_search("Jerusalem", 3)).unwrap();
+        assert!((jerusalem[0].lat - 31.77).abs() < 0.05 && jerusalem[0].count > 500, "{:?}", jerusalem[0]);
+        let time = atlas.with(|m| m.timeline()).unwrap();
+        assert!(time.len() > 400 && time.windows(2).all(|w| w[0].first <= w[1].first));
+        assert!(atlas.with(|m| m.shapes()).unwrap().iter().any(|(k, _)| k == "land"));
+        for entry in lib.kind("apparatus").into_iter().chain(lib.kind("harmony")).chain(lib.kind("atlas")).chain(lib.kind("commentary")) {
+            let seal = entry.with(grtb::signing::check).unwrap();
+            assert!(matches!(seal, grtb::signing::Seal::Signed { ref by, .. } if by == "GRT Project"), "{}: {seal:?}", entry.info.abbreviation);
+        }
     }
 
     #[test]

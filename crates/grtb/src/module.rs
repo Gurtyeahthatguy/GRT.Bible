@@ -17,7 +17,7 @@ use crate::markup::strong_number;
 use crate::refs::Ref;
 use crate::text::fold;
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 pub const EXTENSION: &str = "grtb";
 const APPLICATION_ID: i64 = 0x4752_5442;
 
@@ -127,8 +127,27 @@ CREATE TABLE aliases (
 CREATE INDEX aliases_alias ON aliases (alias);
 ";
 
+const ATLAS_SCHEMA: &str = "
+CREATE TABLE places (
+    entry       INTEGER PRIMARY KEY,
+    lat         INTEGER NOT NULL,
+    lon         INTEGER NOT NULL
+);
+CREATE TABLE events (
+    entry       INTEGER PRIMARY KEY,
+    first       INTEGER NOT NULL,
+    last        INTEGER NOT NULL
+);
+CREATE TABLE shapes (
+    id          INTEGER PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    path        TEXT NOT NULL
+);
+CREATE INDEX events_first ON events (first);
+";
+
 /// What a module holds.
-pub const KINDS: [&str; 5] = ["bible", "commentary", "dictionary", "crossrefs", "book"];
+pub const KINDS: [&str; 8] = ["bible", "commentary", "dictionary", "crossrefs", "book", "apparatus", "harmony", "atlas"];
 
 /// A reference as one sortable number: book, chapter and verse in fixed places.
 pub fn pack(r: Ref) -> i64 {
@@ -317,6 +336,10 @@ pub struct EntryContent {
     pub spans: Vec<(Ref, Ref)>,
     /// Other names an entry is found by: `G26`, `H7225`, a lemma.
     pub aliases: Vec<String>,
+    /// Latitude and longitude of a place, in hundred-thousandths of a degree.
+    pub point: Option<(i32, i32)>,
+    /// First and last year of an event, negative before Christ.
+    pub years: Option<(i32, i32)>,
 }
 
 /// The references one verse sends the reader to, under one heading.
@@ -345,6 +368,8 @@ pub struct ModuleContent {
     pub integrity: Option<Report>,
     pub entries: Vec<EntryContent>,
     pub links: Vec<LinkGroup>,
+    /// Outlines of a map: kind (`land`, `lake`, `river`) and SVG path data in map units.
+    pub shapes: Vec<(String, String)>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -368,7 +393,17 @@ pub fn write(path: &Path, content: &ModuleContent) -> Result<(), String> {
         // A module declares the oldest schema that reads it, so 0.2 still opens what needs nothing newer.
         let mut manifest = content.manifest.clone();
         let needs_words = content.books.values().any(|b| !b.words.is_empty()) || content.entries.iter().any(|e| !e.aliases.is_empty());
-        manifest.schema_version = manifest.schema_version.min(if needs_words { SCHEMA_VERSION } else { 2 });
+        let atlas = content.entries.iter().any(|e| e.point.is_some() || e.years.is_some()) || !content.shapes.is_empty();
+        manifest.schema_version = manifest.schema_version.min(if atlas || KINDS[5..].contains(&manifest.kind.as_str()) {
+            4
+        } else if needs_words {
+            3
+        } else {
+            2
+        });
+        if atlas {
+            db.execute_batch(ATLAS_SCHEMA).map_err(err)?;
+        }
         let mut meta: Vec<(String, String)> = manifest.pairs().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         if let Some(report) = &content.integrity {
             meta.push(("integrity".into(), serde_json::to_string(report).map_err(err)?));
@@ -512,6 +547,15 @@ fn write_resources(tx: &rusqlite::Transaction, content: &ModuleContent) -> Resul
             tx.execute("INSERT INTO aliases (entry, alias) VALUES (?1, ?2)", params![id, fold(alias.trim(), language)])
                 .map_err(err)?;
         }
+        if let Some((lat, lon)) = e.point {
+            tx.execute("INSERT INTO places (entry, lat, lon) VALUES (?1, ?2, ?3)", params![id, lat, lon]).map_err(err)?;
+        }
+        if let Some((first, last)) = e.years {
+            tx.execute("INSERT INTO events (entry, first, last) VALUES (?1, ?2, ?3)", params![id, first, last]).map_err(err)?;
+        }
+    }
+    for (i, (kind, path)) in content.shapes.iter().enumerate() {
+        tx.execute("INSERT INTO shapes (id, kind, path) VALUES (?1, ?2, ?3)", params![i as i64 + 1, kind, path]).map_err(err)?;
     }
     for (i, l) in content.links.iter().enumerate() {
         let targets = l.targets.iter().map(|(a, b)| range_osis(*a, *b)).collect::<Vec<_>>().join(" ");
@@ -611,6 +655,74 @@ pub struct Hit {
     pub chapter: u16,
     pub verse: u16,
     pub text: String,
+}
+
+/// A place on the map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlaceView {
+    pub id: i64,
+    pub key: String,
+    pub title: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// Verses citing it, in the range asked or in the whole Bible.
+    pub count: u32,
+}
+
+/// An event on the timeline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventView {
+    pub id: i64,
+    pub title: String,
+    pub first: i32,
+    pub last: i32,
+    /// The verses that tell it, from first to last.
+    pub span: String,
+}
+
+/// The SHA-256 of a module's schema, meta and rows, the signature left out, in a fixed order.
+pub fn content_digest(db: &Connection) -> Result<[u8; 32], String> {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    let mut put = |tag: u8, bytes: &[u8]| {
+        hash.update([tag]);
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    };
+    let mut stmt = db.prepare("SELECT type, name, COALESCE(sql, '') FROM sqlite_master ORDER BY name").map_err(err)?;
+    let objects: Vec<(String, String, String)> =
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    drop(stmt);
+    for (kind, name, sql) in &objects {
+        put(1, name.as_bytes());
+        put(2, sql.as_bytes());
+        // The search index is built from the verses, and its shadow tables hold nothing of their own.
+        if kind != "table" || name.starts_with("sqlite_") || name.starts_with("verses_fts") || sql.contains("VIRTUAL") {
+            continue;
+        }
+        let columns: Vec<String> = {
+            let mut info = db.prepare(&format!("SELECT name FROM pragma_table_info('{}')", name.replace('\'', "''"))).map_err(err)?;
+            let found = info.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+            found
+        };
+        let order = columns.iter().map(|c| format!("\"{}\"", c.replace('"', "\"\""))).collect::<Vec<_>>().join(", ");
+        let filter = if name == "meta" { " WHERE key <> 'signature'" } else { "" };
+        let mut rows = db.prepare(&format!("SELECT {order} FROM \"{name}\"{filter} ORDER BY {order}")).map_err(err)?;
+        let mut cursor = rows.query([]).map_err(err)?;
+        while let Some(row) = cursor.next().map_err(err)? {
+            for i in 0..columns.len() {
+                match row.get_ref(i).map_err(err)? {
+                    rusqlite::types::ValueRef::Null => put(3, &[]),
+                    rusqlite::types::ValueRef::Integer(n) => put(4, &n.to_le_bytes()),
+                    rusqlite::types::ValueRef::Real(f) => put(5, &f.to_le_bytes()),
+                    rusqlite::types::ValueRef::Text(t) => put(6, t),
+                    rusqlite::types::ValueRef::Blob(b) => put(7, b),
+                }
+            }
+            put(8, &[]);
+        }
+    }
+    Ok(hash.finalize().into())
 }
 
 /// An open module.
@@ -873,6 +985,103 @@ impl Module {
             }
         }
         Ok(None)
+    }
+
+    /// Places cited between two verses, with how often, most cited first, then in the order they come.
+    pub fn places_in(&self, first: Ref, last: Ref) -> Result<Vec<PlaceView>, String> {
+        if !self.has_table("places")? {
+            return Ok(Vec::new());
+        }
+        let (a, b) = (pack(first), pack(last));
+        let low = pack(Ref::new(first.book, 0, 0));
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT e.id, e.key, e.title, p.lat, p.lon, COUNT(*) AS n FROM spans s
+                 JOIN places p ON p.entry = s.entry JOIN entries e ON e.id = s.entry
+                 WHERE s.first BETWEEN ?1 AND ?3 AND s.last >= ?2
+                 GROUP BY e.id ORDER BY n DESC, MIN(s.first), e.id",
+            )
+            .map_err(err)?;
+        let rows = stmt.query_map(params![low, a, b], |r| {
+            Ok(PlaceView { id: r.get(0)?, key: r.get(1)?, title: r.get(2)?, lat: r.get::<_, i64>(3)? as f64 / 1e5, lon: r.get::<_, i64>(4)? as f64 / 1e5, count: r.get(5)? })
+        });
+        let found = rows.map_err(err)?.collect::<Result<_, _>>().map_err(err);
+        found
+    }
+
+    /// Places whose name starts with the folded text.
+    pub fn place_search(&self, text: &str, limit: u32) -> Result<Vec<PlaceView>, String> {
+        if !self.has_table("places")? {
+            return Ok(Vec::new());
+        }
+        let folded = fold(text.trim(), &self.manifest.language);
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT e.id, e.key, e.title, p.lat, p.lon, (SELECT COUNT(*) FROM spans WHERE entry = e.id) FROM entries e
+                 JOIN places p ON p.entry = e.id
+                 WHERE e.fold >= ?1 AND e.fold < ?1 || char(1114111) ORDER BY e.fold, e.id LIMIT ?2",
+            )
+            .map_err(err)?;
+        let rows = stmt.query_map(params![folded, limit], |r| {
+            Ok(PlaceView { id: r.get(0)?, key: r.get(1)?, title: r.get(2)?, lat: r.get::<_, i64>(3)? as f64 / 1e5, lon: r.get::<_, i64>(4)? as f64 / 1e5, count: r.get(5)? })
+        });
+        let found = rows.map_err(err)?.collect::<Result<_, _>>().map_err(err);
+        found
+    }
+
+    /// Every dated event, in order of time, each with the first verse that tells it.
+    pub fn timeline(&self) -> Result<Vec<EventView>, String> {
+        if !self.has_table("events")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .db
+            .prepare_cached(
+                "SELECT e.id, e.title, v.first, v.last, (SELECT MIN(first) FROM spans WHERE entry = e.id),
+                        (SELECT MAX(last) FROM spans WHERE entry = e.id)
+                 FROM events v JOIN entries e ON e.id = v.entry ORDER BY v.first, e.id",
+            )
+            .map_err(err)?;
+        let rows = stmt.query_map([], |r| {
+            let from: Option<i64> = r.get(4)?;
+            let to: Option<i64> = r.get(5)?;
+            Ok(EventView {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                first: r.get(2)?,
+                last: r.get(3)?,
+                span: match (from, to) {
+                    (Some(a), Some(b)) => range_osis(unpack(a), unpack(b)),
+                    _ => String::new(),
+                },
+            })
+        });
+        let found = rows.map_err(err)?.collect::<Result<_, _>>().map_err(err);
+        found
+    }
+
+    /// The outlines of the map.
+    pub fn shapes(&self) -> Result<Vec<(String, String)>, String> {
+        if !self.has_table("shapes")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.db.prepare_cached("SELECT kind, path FROM shapes ORDER BY id").map_err(err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+        let all: Vec<(String, String)> = rows.map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+        // Path data comes from a file: only moves, lines and numbers are passed on.
+        Ok(all.into_iter().filter(|(_, d)| d.bytes().all(|b| b"MLZ0123456789.- ".contains(&b))).collect())
+    }
+
+    /// A value of the meta table that the manifest does not hold, such as the signature.
+    pub fn meta(&self, key: &str) -> Result<Option<String>, String> {
+        self.db.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| r.get(0)).optional().map_err(err)
+    }
+
+    /// The digest of everything in the module but its signature.
+    pub fn digest(&self) -> Result<[u8; 32], String> {
+        content_digest(&self.db)
     }
 
     fn has_table(&self, name: &str) -> Result<bool, String> {
@@ -1267,6 +1476,39 @@ mod tests {
     }
 
     #[test]
+    fn an_atlas_answers_by_passage_name_and_time() {
+        let place = |title: &str, spans: Vec<(Ref, Ref)>, point| EntryContent { key: title.into(), title: title.into(), spans, point: Some(point), ..Default::default() };
+        let event = |title: &str, spans: Vec<(Ref, Ref)>, years| EntryContent { key: title.into(), title: title.into(), spans, years: Some(years), ..Default::default() };
+        let description = description();
+        let mut content = crate::assemble::assemble_resource(&description, "atlas", vec![
+            place("Bethel", vec![(r("Gen.12.8"), r("Gen.12.8")), (r("Gen.28.19"), r("Gen.28.19"))], (3193000, 3523000)),
+            place("Ai", vec![(r("Gen.12.8"), r("Gen.12.8"))], (3191600, 3526100)),
+            place("Haran", vec![(r("Gen.12.4"), r("Gen.12.5"))], (3686000, 3903000)),
+            event("The call of Abram", vec![(r("Gen.12.1"), r("Gen.12.9"))], (-1920, -1920)),
+            event("Creation", vec![(r("Gen.1.1"), r("Gen.2.3"))], (-4003, -4003)),
+        ], vec![], vec![], "2026-11-14", "");
+        content.shapes = vec![("land".into(), "M0 0 L10 0 L10 10 Z".into()), ("land".into(), "M0 0 <script>".into())];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ATL.grtb");
+        write(&path, &content).unwrap();
+        let m = Module::open(&path).unwrap();
+        assert_eq!(m.manifest.schema_version, 4);
+        let titles = |list: Vec<PlaceView>| list.into_iter().map(|p| (p.title, p.count)).collect::<Vec<_>>();
+        assert_eq!(titles(m.places_in(r("Gen.12.0"), r("Gen.12.999")).unwrap()), [("Haran".to_string(), 1), ("Bethel".into(), 1), ("Ai".into(), 1)]);
+        assert_eq!(titles(m.places_in(r("Gen.28.1"), r("Gen.28.22")).unwrap()), [("Bethel".to_string(), 1)]);
+        let bethel = &m.place_search("beth", 5).unwrap()[0];
+        assert_eq!((bethel.title.as_str(), bethel.count, bethel.lat), ("Bethel", 2, 31.93));
+        let time = m.timeline().unwrap();
+        assert_eq!(time.iter().map(|e| (e.title.as_str(), e.first)).collect::<Vec<_>>(), [("Creation", -4003), ("The call of Abram", -1920)]);
+        assert_eq!(time[1].span, "Gen.12.1-Gen.12.9");
+        // A path with anything but moves, lines and numbers is not passed on.
+        assert_eq!(m.shapes().unwrap(), [("land".to_string(), "M0 0 L10 0 L10 10 Z".to_string())]);
+        // Packs of older kinds still declare the schema older programs read.
+        let (_dir, old) = written("commentary", vec![EntryContent { title: "A".into(), body: "<p>a</p>".into(), spans: vec![(r("Gen.1.1"), r("Gen.1.1"))], ..Default::default() }], vec![]);
+        assert_eq!(old.manifest.schema_version, 2);
+    }
+
+    #[test]
     fn a_numbered_lexicon_answers_by_number_and_word() {
         let entry = |key: &str, aliases: &[&str]| EntryContent {
             key: key.into(),
@@ -1336,10 +1578,10 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_refused() {
         let mut map = BTreeMap::new();
-        for (k, v) in [("kind", "atlas"), ("id", "x"), ("abbreviation", "X"), ("title", "X"), ("language", "en"), ("canon", ""), ("versification", ""), ("license", ""), ("books_present", "0"), ("source_notes", "false"), ("schema_version", "2")] {
+        for (k, v) in [("kind", "hymnal"), ("id", "x"), ("abbreviation", "X"), ("title", "X"), ("language", "en"), ("canon", ""), ("versification", ""), ("license", ""), ("books_present", "0"), ("source_notes", "false"), ("schema_version", "2")] {
             map.insert(k.to_string(), v.to_string());
         }
-        assert!(Manifest::from_pairs(&map).unwrap_err().contains("atlas"));
+        assert!(Manifest::from_pairs(&map).unwrap_err().contains("hymnal"));
         map.remove("kind");
         assert_eq!(Manifest::from_pairs(&map).unwrap().kind, "bible");
     }

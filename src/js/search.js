@@ -29,6 +29,8 @@ export function renderSearch(container, ctx, initial = '') {
   let offset = 0;
   let last = null;
   let effective = null;
+  // Only the latest search draws its results, and a page is asked for once.
+  let asked = 0;
 
   const drawSaved = () => {
     const list = ctx.user().saved_searches;
@@ -62,7 +64,10 @@ export function renderSearch(container, ctx, initial = '') {
       more.hidden = true;
       return;
     }
+    if (append && more.disabled) return;
+    const ticket = ++asked;
     if (!append) offset = 0;
+    more.disabled = true;
     const modules = scope.value === 'all' ? [] : [ctx.module().abbreviation];
     const full = !append && within.checked && effective ? `(${effective}) AND (${query})` : append ? effective : query;
     status.textContent = 'Searching…';
@@ -70,9 +75,13 @@ export function renderSearch(container, ctx, initial = '') {
     try {
       reply = await api.search(full, modules, books(), offset, PAGE);
     } catch (error) {
+      if (ticket !== asked) return;
       status.textContent = `The search could not run: ${error}`;
+      more.disabled = false;
       return;
     }
+    if (ticket !== asked) return;
+    more.disabled = false;
     last = query;
     effective = full;
     withinLabel.hidden = false;

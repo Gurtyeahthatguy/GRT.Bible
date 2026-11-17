@@ -48,7 +48,7 @@ pub fn assemble(description: &Description, books: BTreeMap<u8, BookContent>, gen
         missing_books: missing_books(&books),
         features: Vec::new(),
     };
-    ModuleContent { manifest, books, integrity: Some(report), entries: Vec::new(), links: Vec::new() }
+    ModuleContent { manifest, books, integrity: Some(report), entries: Vec::new(), links: Vec::new(), shapes: Vec::new() }
 }
 
 /// A commentary, dictionary, set of cross-references or book, ready to write.
@@ -88,7 +88,7 @@ pub fn assemble_resource(
         missing_books: Vec::new(),
         features,
     };
-    ModuleContent { manifest, books: BTreeMap::new(), integrity: None, entries, links }
+    ModuleContent { manifest, books: BTreeMap::new(), integrity: None, entries, links, shapes: Vec::new() }
 }
 
 /// The civil date of a Unix time, as `YYYY-MM-DD`.

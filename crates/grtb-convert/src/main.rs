@@ -7,6 +7,7 @@ mod morphgnt;
 mod n1904;
 mod oshb;
 mod rtf;
+mod study;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,16 @@ Usage:
   grtb-convert bdb     <BrownDriverBriggs.xml> --index <LexicalIndex.xml> [options] -o <out.grtb>
   grtb-convert haydock <haydock.tsv>      [options] -o <out.grtb>
   grtb-convert fathers <commentaries.sqlite> --excerpts catena|fathers [options] -o <out.grtb>
+  grtb-convert apparatus <folder>        [options] -o <out.grtb>
+                       the SBLGNT apparatus, one text file per book
+  grtb-convert harmony <folder>          [options] -o <out.grtb>
+                       the Eusebian canons: sections and canon tables
+  grtb-convert atlas   <atlas.json>      [options] -o <out.grtb>
+                       places, events and map outlines written by scripts/build-atlas.py
+  grtb-convert keygen  <secret.key>
+                       writes a new signing key, readable only by its owner, and prints the public key
+  grtb-convert sign    <module.grtb> --key <secret.key>
+                       signs a module in place
   grtb-convert liturgy <YYYY-MM-DD> --to <YYYY-MM-DD>
                        prints the liturgical day and readings of each date as a line of JSON
   grtb-convert plans  plans
@@ -254,6 +265,55 @@ fn run() -> Result<(), String> {
             println!("{}: commentary with {} entries", output.display(), content.entries.len());
             Ok(())
         }
+        "apparatus" | "harmony" | "atlas" => {
+            let (entries, shapes, bytes) = match args.command.as_str() {
+                "apparatus" => {
+                    let (e, b) = study::apparatus(&args.input)?;
+                    (e, Vec::new(), b)
+                }
+                "harmony" => {
+                    let (e, b) = study::harmony(&args.input)?;
+                    (e, Vec::new(), b)
+                }
+                _ => study::atlas(&args.input)?,
+            };
+            let output = args.output.as_ref().ok_or("-o is required")?;
+            let mut content = assemble_resource(&description(&args)?, &args.command, entries, Vec::new(), Vec::new(), &generation_date(&args), &sha256_hex(&bytes));
+            content.shapes = shapes;
+            module::write(output, &content)?;
+            println!("{}: {} with {} entries and {} outlines", output.display(), args.command, content.entries.len(), content.shapes.len());
+            Ok(())
+        }
+        "keygen" => {
+            use std::io::Read;
+            if args.input.exists() {
+                return Err(format!("{} exists; a signing key is never overwritten", args.input.display()));
+            }
+            let mut seed = [0u8; 32];
+            std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed)).map_err(|e| e.to_string())?;
+            if let Some(dir) = args.input.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            let hex: String = seed.iter().map(|b| format!("{b:02x}")).collect();
+            write_secret(&args.input, &hex)?;
+            println!("{}", grtb::signing::public_key(&seed));
+            Ok(())
+        }
+        "sign" => {
+            let key = std::fs::read_to_string(args.options.get("key").ok_or("--key is required")?).map_err(|e| e.to_string())?;
+            let key = key.trim();
+            let mut seed = [0u8; 32];
+            if key.len() != 64 {
+                return Err("the key file must hold 64 hex digits".into());
+            }
+            for (i, byte) in seed.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&key[i * 2..i * 2 + 2], 16).map_err(|_| "the key file must hold 64 hex digits")?;
+            }
+            let public = grtb::signing::sign(&args.input, &seed)?;
+            let seal = grtb::signing::check(&Module::open(&args.input)?)?;
+            println!("{}: signed by {} ({seal:?})", args.input.display(), grtb::signing::fingerprint(&public));
+            Ok(())
+        }
         "liturgy" => {
             let parse = |text: &str| grtb::liturgy::parse_date(text).ok_or_else(|| format!("not a date: {text}"));
             let from = parse(&args.input.to_string_lossy())?;
@@ -408,4 +468,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Writes a secret file that only its owner can read.
+fn write_secret(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| e.to_string())?;
+    file.write_all(format!("{text}\n").as_bytes()).map_err(|e| e.to_string())
 }

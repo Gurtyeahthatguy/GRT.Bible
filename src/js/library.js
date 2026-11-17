@@ -7,12 +7,16 @@ import { renderMarkup, splitRange } from './markup.js';
 import { isGreek, isHebrew, transliterateGreek } from './original.js';
 import { closeOverlay, openOverlay, toast } from './overlay.js';
 import { formatReference, splitOsis } from './reference.js';
+import { mapTab, placesSection, timelineTab } from './atlas.js';
+import { referencesCanvas } from './graph.js';
 
 export const LIBRARY_TABS = [
   { id: 'passage', label: 'This passage' },
   { id: 'word', label: 'Word', words: true },
   { id: 'dictionary', label: 'Dictionary', kind: 'dictionary' },
   { id: 'books', label: 'Books', kind: 'book' },
+  { id: 'map', label: 'Map', kind: 'atlas' },
+  { id: 'timeline', label: 'Timeline', kind: 'atlas' },
   { id: 'installed', label: 'Installed' },
 ];
 
@@ -22,6 +26,9 @@ export const KIND_LABELS = {
   crossrefs: ['Cross-references', 'Cross-references'],
   dictionary: ['Dictionary or lexicon', 'Dictionaries and lexicons'],
   book: ['Book', 'Books'],
+  apparatus: ['Critical apparatus', 'Critical apparatuses'],
+  harmony: ['Harmony of the Gospels', 'Harmonies of the Gospels'],
+  atlas: ['Atlas of places and events', 'Atlases'],
 };
 
 const SCHEME_LABELS = {
@@ -139,7 +146,40 @@ async function crossReferences(ctx, at) {
     }
     section.append(h('details', { open: true }, h('summary', {}, `${set.module} · ${set.title}`), body));
   }
+  if (all.length) {
+    section.append(h('button', {
+      type: 'button',
+      class: 'quiet',
+      title: 'Save the verse and its references as a canvas that GRT Graphs opens',
+      onclick: () => sendReferences(ctx, at, sets, labelOf),
+    }, 'Send to Graphs…'));
+  }
   return section;
+}
+
+async function sendReferences(ctx, at, sets, labelOf) {
+  const module = ctx.module();
+  const text = async (range) => (await api.passage(module.abbreviation, range.start, range.end).catch(() => [])).slice(0, 3).map((v) => v.text).join(' ');
+  const [label] = await rangeLabels(ctx, [{ start: at, end: at }]);
+  const groups = [];
+  for (const set of sets) {
+    for (const group of set.groups) {
+      const targets = [];
+      for (const target of group.targets.slice(0, 40)) {
+        const range = splitRange(target);
+        if (range) targets.push({ label: labelOf.get(target) || target, text: await text(range) });
+      }
+      groups.push({ label: group.label, targets });
+    }
+  }
+  const path = await pickSave('Send to GRT Graphs', `${label}.canvas`, [{ name: 'JSON Canvas', extensions: ['canvas'] }]);
+  if (!path) return;
+  try {
+    await api.saveText(path, referencesCanvas({ label, text: await text({ start: at, end: at }) }, groups));
+    toast('Open the file in GRT Graphs to arrange and draw on it.');
+  } catch (error) {
+    toast(String(error), 5000);
+  }
 }
 
 function spanLabel(ctx, span, label) {
@@ -254,9 +294,13 @@ async function passageTab(container, ctx) {
   }
   const [label] = await rangeLabels(ctx, [{ start: at, end: at }]);
   container.append(h('p', { class: 'lib-focus' }, h('strong', {}, label),
-    h('span', { class: 'fine' }, ctx.hasSelection() ? ' · the selected verse' : ' · the first verse in view, or select one')));
-  const [refs, commentary, topics] = await Promise.all([crossReferences(ctx, at), commentarySection(ctx, at, container), topicsSection(ctx, at).catch(() => null)]);
-  container.append(refs, commentary, topics || '');
+    h('span', { class: 'fine' }, ctx.hasSelection() ? ' · the selected verse' : ' · the first verse in view, or select one'), ' ',
+    h('button', { type: 'button', class: 'quiet', title: 'The passage with your notes, the commentaries, the variants and the words, to print or send to GRT Paper', onclick: () => ctx.print('sheet') }, 'Study sheet…')));
+  const quiet = (promise) => promise.catch(() => null);
+  const [numbering, refs, variants, parallels, commentary, topics, places] = await Promise.all([
+    quiet(numberingSection(ctx, at)), crossReferences(ctx, at), quiet(apparatusSection(ctx, at)), quiet(parallelsSection(ctx, at)),
+    commentarySection(ctx, at, container), quiet(topicsSection(ctx, at)), quiet(placesSection(ctx, at))]);
+  container.append(...[numbering, refs, variants, parallels, commentary, topics, places].filter(Boolean));
 }
 
 // Word
@@ -438,6 +482,74 @@ async function booksTab(container, ctx) {
   await open(null);
 }
 
+/** How the verse is numbered in each installed translation, shown only where the numbers differ. */
+async function numberingSection(ctx, at) {
+  const bibles = ctx.modules().filter((m) => m.kind === 'bible');
+  const found = await Promise.all(bibles.map((m) => api.resolve(m.abbreviation, [at]).then(([place]) => (place ? { m, place } : null)).catch(() => null)));
+  const known = found.filter(Boolean);
+  const key = (p) => `${p.book}.${p.chapter}.${p.verse}`;
+  if (new Set(known.map((k) => key(k.place))).size < 2) return null;
+  const groups = new Map();
+  for (const { m, place } of known) {
+    const k = key(place);
+    if (!groups.has(k)) groups.set(k, { place, modules: [] });
+    groups.get(k).modules.push(m);
+  }
+  return h('section', { class: 'lib-section numbering' }, h('h3', {}, 'Numbering'),
+    h('p', { class: 'fine' }, 'This verse carries a different number in some translations, because they follow different traditions of numbering.'),
+    h('ul', {}, [...groups.values()].map(({ place, modules }) => h('li', {},
+      h('strong', {}, ctx.placeLabel(place, null, modules[0])), ' ',
+      h('span', { class: 'fine' }, `${modules.map((m) => m.abbreviation).join(', ')} · ${schemeLabel(modules[0].versification)}`)))));
+}
+
+/** The readings of the editions where they part from the printed Greek text. */
+async function apparatusSection(ctx, at) {
+  const sets = await api.apparatus(at);
+  if (!sets.length) return null;
+  const section = h('section', { class: 'lib-section apparatus' }, h('h3', {}, 'Variants'));
+  for (const set of sets) {
+    const legend = set.legend ? h('details', { class: 'sigla' }, h('summary', {}, 'Sigla'), renderMarkup(set.legend, handlersFor(ctx))) : null;
+    section.append(h('div', { class: 'apparatus-set' },
+      h('p', { class: 'fine' }, `${set.module} · ${set.title}`),
+      set.items.map((item) => h('article', { class: 'entry', lang: 'grc' }, renderMarkup(item.body, handlersFor(ctx)))),
+      legend));
+  }
+  return section;
+}
+
+const GOSPEL_ORDER = ['Matt', 'Mark', 'Luke', 'John'];
+
+/** The parallel passages of the other Gospels, side by side in the reader's translation. */
+async function parallelsSection(ctx, at) {
+  const sets = await api.harmony(at);
+  if (!sets.length) return null;
+  const module = ctx.module();
+  const section = h('section', { class: 'lib-section parallels' }, h('h3', {}, 'Parallels'));
+  const here = splitOsis(at)?.book;
+  for (const set of sets) {
+    for (const row of set.items) {
+      const ranges = row.spans.map((s) => splitRange(s)).filter(Boolean)
+        .sort((a, b) => GOSPEL_ORDER.indexOf(splitOsis(a.start)?.book) - GOSPEL_ORDER.indexOf(splitOsis(b.start)?.book));
+      const labels = await rangeLabels(ctx, ranges);
+      const texts = await Promise.all(ranges.map((r) => api.passage(module.abbreviation, r.start, r.end).catch(() => [])));
+      const alone = new Set(ranges.map((r) => splitOsis(r.start)?.book)).size === 1;
+      section.append(h('div', { class: 'parallel-row' },
+        h('p', { class: 'fine' }, alone ? `${row.title}: told by this Gospel alone` : row.title),
+        h('div', { class: `parallel-columns${ranges.length > 1 ? ' several' : ''}` }, ranges.map((r, i) => h('div', {
+          class: `parallel-column${splitOsis(r.start)?.book === here ? ' here' : ''}`,
+          lang: module.language,
+          dir: module.direction || 'ltr',
+        },
+        h('button', { type: 'button', class: 'link ref', onclick: () => ctx.openRange(r.start, r.end) }, labels[i]),
+        h('p', {}, texts[i].length
+          ? texts[i].slice(0, 20).map((v) => [h('sup', { class: 'vn' }, String(v.verse)), withBreaks(v.text), ' '])
+          : h('span', { class: 'fine' }, `Not in ${module.abbreviation}.`)))))));
+    }
+    section.append(h('p', { class: 'fine' }, `${set.module} · ${set.title}`));
+  }
+  return section;
+}
+
 // Installed
 
 function moduleCard(m, ctx, redraw) {
@@ -446,6 +558,21 @@ function moduleCard(m, ctx, redraw) {
   const origin = m.bundled
     ? 'Comes with the program.'
     : m.origin ? `Installed from ${m.origin.file} on ${m.origin.installed}.` : 'Installed from a file.';
+  const seal = m.bundled ? null : h('p', { class: 'fine seal' }, sealText(m.origin?.seal));
+  const check = m.bundled ? null : h('button', {
+    type: 'button',
+    class: 'link',
+    onclick: async () => {
+      check.disabled = true;
+      try {
+        seal.textContent = sealText(await api.verifyModule(m.abbreviation));
+      } catch (error) {
+        seal.textContent = `Not trusted: ${error}`;
+        seal.classList.add('danger');
+      }
+      check.disabled = false;
+    },
+  }, 'Check the signature');
   return h('article', { class: 'card module', dataset: { module: m.abbreviation } },
     h('header', {}, h('strong', {}, `${m.abbreviation} · ${m.title}`),
       m.bundled ? null : h('button', {
@@ -466,7 +593,21 @@ function moduleCard(m, ctx, redraw) {
     h('p', { class: 'fine' }, `Licence: ${m.license || 'not stated'}`),
     m.source ? h('p', { class: 'fine' }, `Source: ${m.source}`) : null,
     h('p', { class: 'fine' }, `${origin} File: ${m.fileName}`),
+    seal, check,
     m.summary ? h('p', { class: 'fine' }, m.summary) : null);
+}
+
+/** What the library knows of a pack's signature. */
+export function sealText(seal, bundled = false) {
+  if (bundled) return 'Part of the program.';
+  if (!seal) return 'Signature not checked yet.';
+  if (seal.state === 'signed') return `Signed by ${seal.by}, key ${fingerprint(seal.key)}.`;
+  if (seal.state === 'unknown') return `Signed by a key this program does not know: ${fingerprint(seal.key)}.`;
+  return 'Not signed: nothing says who made it.';
+}
+
+function fingerprint(key) {
+  return (key || '').slice(0, 16).match(/.{1,4}/g)?.join(' ') || '';
 }
 
 function installedTab(container, ctx) {
@@ -507,7 +648,7 @@ function installedTab(container, ctx) {
   draw();
 }
 
-const RENDERERS = { passage: passageTab, word: wordTab, dictionary: dictionaryTab, books: booksTab, installed: installedTab };
+const RENDERERS = { passage: passageTab, word: wordTab, dictionary: dictionaryTab, books: booksTab, map: mapTab, timeline: timelineTab, installed: installedTab };
 
 export async function renderLibrary(container, tab, ctx, options = {}) {
   const renderer = RENDERERS[tab] || passageTab;

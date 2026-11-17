@@ -192,6 +192,86 @@ fn commentary(state: Shared, module: String, at: String) -> Result<Vec<grtb::mod
     entry.with(|m| m.entries_at(at))
 }
 
+/// The variants of a verse in every installed apparatus.
+#[tauri::command]
+fn apparatus(state: Shared, at: String) -> Result<Vec<SetView<grtb::module::EntryRow>>, String> {
+    let at = parse_ref(&at)?;
+    let lib = read_lock(&state.library);
+    let mut out = Vec::new();
+    for entry in lib.kind("apparatus") {
+        let items = entry.with(|m| m.entries_at(at))?.into_iter().filter(|e| !e.spans.is_empty()).collect::<Vec<_>>();
+        let legend = entry.with(|m| m.entry_by_key("sigla"))?.map(|e| e.body).unwrap_or_default();
+        if !items.is_empty() {
+            out.push(SetView { module: entry.info.abbreviation.clone(), title: entry.info.title.clone(), legend, items });
+        }
+    }
+    Ok(out)
+}
+
+/// The rows of the Eusebian canons, or another harmony, that hold a verse.
+#[tauri::command]
+fn harmony(state: Shared, at: String) -> Result<Vec<SetView<grtb::module::EntryRow>>, String> {
+    let at = parse_ref(&at)?;
+    let lib = read_lock(&state.library);
+    let mut out = Vec::new();
+    for entry in lib.kind("harmony") {
+        let items = entry.with(|m| m.entries_at(at))?.into_iter().filter(|e| !e.spans.is_empty()).collect::<Vec<_>>();
+        if !items.is_empty() {
+            out.push(SetView { module: entry.info.abbreviation.clone(), title: entry.info.title.clone(), legend: String::new(), items });
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+struct SetView<T> {
+    module: String,
+    title: String,
+    legend: String,
+    items: Vec<T>,
+}
+
+fn atlas_entry(state: &AppState) -> Result<std::sync::Arc<library::Entry>, String> {
+    read_lock(&state.library).kind("atlas").into_iter().next().ok_or_else(|| "No atlas is installed.".to_string())
+}
+
+/// The places cited in a passage, most cited first.
+#[tauri::command]
+fn atlas_places(state: Shared, first: String, last: String) -> Result<Vec<grtb::module::PlaceView>, String> {
+    let (first, last) = (parse_ref(&first)?, parse_ref(&last)?);
+    atlas_entry(&state)?.with(|m| m.places_in(first, last))
+}
+
+#[tauri::command]
+fn atlas_search(state: Shared, text: String) -> Result<Vec<grtb::module::PlaceView>, String> {
+    atlas_entry(&state)?.with(|m| m.place_search(&text, 40))
+}
+
+#[tauri::command]
+fn atlas_timeline(state: Shared) -> Result<Vec<grtb::module::EventView>, String> {
+    atlas_entry(&state)?.with(|m| m.timeline())
+}
+
+#[tauri::command]
+fn atlas_shapes(state: Shared) -> Result<Vec<(String, String)>, String> {
+    atlas_entry(&state)?.with(|m| m.shapes())
+}
+
+/// Checks an installed pack's signature again and keeps the answer.
+#[tauri::command]
+async fn module_verify(app: AppHandle, module: String) -> Result<grtb::signing::Seal, String> {
+    let state = app.state::<AppState>();
+    let entry = read_lock(&state.library).get(&module)?;
+    let checked = entry.clone();
+    let seal = tauri::async_runtime::spawn_blocking(move || checked.with(grtb::signing::check)).await.map_err(|e| e.to_string())??;
+    let mut origins = state.origins.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(origin) = origins.get_mut(&file_name(&entry.path)) {
+        origin.seal = Some(seal.clone());
+        state.store.save_origins(&origins)?;
+    }
+    Ok(seal)
+}
+
 /// The next or previous verse the commentary speaks about.
 #[tauri::command]
 fn commentary_step(state: Shared, module: String, at: String, forward: bool) -> Result<Option<String>, String> {
@@ -347,9 +427,15 @@ fn user_import(app: AppHandle, state: Shared, path: String) -> Result<UserData, 
 /// Text the reader chose to bring back, such as notes edited in GRT Notes or a calendar from GRT Dates.
 #[tauri::command]
 fn read_text(app: AppHandle, path: String) -> Result<String, String> {
+    const LIMIT: u64 = 16 * 1024 * 1024;
+    let too_large = || "The file is larger than 16 MB, too large for notes or a calendar".to_string();
+    // A file on disk is measured before it is read.
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LIMIT) {
+        return Err(too_large());
+    }
     let bytes = picked::read(&app, &path)?;
-    if bytes.len() > 16 * 1024 * 1024 {
-        return Err("The file is larger than 16 MB, too large for notes or a calendar".into());
+    if bytes.len() as u64 > LIMIT {
+        return Err(too_large());
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -427,10 +513,10 @@ fn file_name(path: &std::path::Path) -> String {
 }
 
 /// Adds a written module to the library and remembers the file it came from.
-fn register(state: &AppState, written: &std::path::Path, from: String) -> Result<ModuleInfo, String> {
+fn register(state: &AppState, written: &std::path::Path, from: String, seal: Option<grtb::signing::Seal>) -> Result<ModuleInfo, String> {
     let mut origins = state.origins.lock().unwrap_or_else(|e| e.into_inner());
     let today = importer::today();
-    origins.insert(file_name(written), Origin { file: from, installed: today });
+    origins.insert(file_name(written), Origin { file: from, installed: today, seal });
     let result = write_lock(&state.library).add(written, &origins);
     match &result {
         Ok(_) => state.store.save_origins(&origins)?,
@@ -456,7 +542,7 @@ async fn import_module(app: AppHandle, path: String, choices: importer::Choices)
     })
     .await
     .map_err(|e| e.to_string())??;
-    register(&state, &written, from)
+    register(&state, &written, from, None)
 }
 
 /// Installs a `.grtb` file as it is, after checking it.
@@ -464,7 +550,7 @@ async fn import_module(app: AppHandle, path: String, choices: importer::Choices)
 async fn module_install(app: AppHandle, path: String) -> Result<ModuleInfo, String> {
     let state = app.state::<AppState>();
     let handle = app.clone();
-    let (local, abbreviation) = tauri::async_runtime::spawn_blocking(move || {
+    let (local, abbreviation, seal) = tauri::async_runtime::spawn_blocking(move || {
         let local = picked::local(&handle, &path)?;
         let module = grtb::module::Module::open(&local).map_err(|e| {
             if e.contains("is not a GRT Bible module") || e.starts_with("cannot open") || e.contains("in meta") {
@@ -474,9 +560,11 @@ async fn module_install(app: AppHandle, path: String) -> Result<ModuleInfo, Stri
             }
         })?;
         module.quick_check()?;
+        // A pack changed after it was signed is refused; an unsigned one is installed and says so.
+        let seal = grtb::signing::check(&module).map_err(|e| format!("This pack was refused: {e}."))?;
         let abbreviation = module.manifest.abbreviation.clone();
         importer::validate_abbreviation(&abbreviation)?;
-        Ok::<_, String>((local, abbreviation))
+        Ok::<_, String>((local, abbreviation, seal))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -492,7 +580,7 @@ async fn module_install(app: AppHandle, path: String) -> Result<ModuleInfo, Stri
     })
     .await
     .map_err(|e| e.to_string())??;
-    register(&state, &target, file_name(&local))
+    register(&state, &target, file_name(&local), Some(seal))
 }
 
 #[tauri::command]
@@ -624,6 +712,13 @@ pub fn run() {
             commentary_step,
             crossrefs,
             topics,
+            apparatus,
+            harmony,
+            atlas_places,
+            atlas_search,
+            atlas_timeline,
+            atlas_shapes,
+            module_verify,
             entry,
             entry_by_key,
             lookup,

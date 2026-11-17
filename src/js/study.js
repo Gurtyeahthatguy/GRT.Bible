@@ -3,6 +3,7 @@
 import { api, pickFile, pickSave } from './api.js';
 import { clear, h } from './dom.js';
 import { liturgySection } from './liturgy.js';
+import { notesCanvas } from './graph.js';
 import { findPhrase } from './phrase.js';
 import { renderPlans } from './plans.js';
 import { toast } from './overlay.js';
@@ -201,6 +202,20 @@ async function notes(container, ctx) {
       },
     }, 'Export as Markdown…'),
     importButton(ctx),
+    h('button', {
+      class: 'quiet',
+      title: 'Your notes as cards and their links as arrows, in a canvas that GRT Graphs opens',
+      onclick: async () => {
+        const path = await pickSave('Send your notes to GRT Graphs', 'GRT Bible notes.canvas', [{ name: 'JSON Canvas', extensions: ['canvas'] }]);
+        if (!path) return;
+        try {
+          await api.saveText(path, notesCanvas(sorted.map((note, i) => ({ note, label: described[i].label }))));
+          toast('Open the file in GRT Graphs.');
+        } catch (error) {
+          toast(String(error), 5000);
+        }
+      },
+    }, 'Send to Graphs…'),
     h('button', { class: 'quiet', onclick: () => ctx.print('notes') }, 'Print…')));
   const tags = [...new Set(user.notes.flatMap((n) => n.tags || []))].sort();
   const filter = h('input', { type: 'search', placeholder: 'Search your notes, or #tag', 'aria-label': 'Search your notes', value: noteFilter });

@@ -104,7 +104,9 @@ let shown = null;
 export async function liturgySection(ctx, date = shown || isoDate(new Date())) {
   shown = date;
   const section = h('section', { class: 'liturgy' });
+  let asked = 0;
   const draw = async (iso) => {
+    const ticket = ++asked;
     shown = iso;
     const day = await api.liturgy(iso);
     const italian = ctx.module().language === 'it';
@@ -116,6 +118,9 @@ export async function liturgySection(ctx, date = shown || isoDate(new Date())) {
     const own = day.optionalMasses.length
       ? h('details', {}, h('summary', {}, 'Readings of the optional memorial'), await Promise.all(day.optionalMasses.map((mass) => massList(ctx, mass, true))))
       : null;
+    const videos = await gospelVideos(ctx, day).catch(() => null);
+    // A day asked for later wins over one that answers late.
+    if (ticket !== asked) return;
     clear(section,
       h('div', { class: 'row liturgy-nav' },
         h('button', { type: 'button', class: 'quiet', 'aria-label': 'Previous day', onclick: () => draw(shiftDate(iso, -1)) }, '‹'),
@@ -127,7 +132,7 @@ export async function liturgySection(ctx, date = shown || isoDate(new Date())) {
       day.optional.length ? h('p', { class: 'fine' }, `Also: ${day.optional.map(name).join('; ')}`) : null,
       masses,
       own,
-      await gospelVideos(ctx, day).catch(() => null),
+      videos,
       h('p', { class: 'fine' }, 'The calendar of Italy, computed offline. The references follow the Lectionary of 1981; open them in any installed translation.'),
       notice());
   };

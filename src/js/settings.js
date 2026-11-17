@@ -19,7 +19,7 @@ export const DEFAULTS = {
   titles: true,
   module: 'MAR',
   copy: { refPosition: 'after', includeModule: true, includeNumbers: false },
-  parallel: { enabled: false, modules: [] },
+  parallel: { enabled: false, modules: [], differences: false },
   videos: null,
   panel: null,
   searchScope: 'module',
@@ -55,6 +55,7 @@ export function normalise(raw = {}) {
   }
   if (raw.parallel && typeof raw.parallel === 'object') {
     s.parallel.enabled = raw.parallel.enabled === true;
+    s.parallel.differences = raw.parallel.differences === true;
     if (Array.isArray(raw.parallel.modules)) {
       s.parallel.modules = raw.parallel.modules.filter((m) => typeof m === 'string').slice(0, 3);
     }

@@ -1,9 +1,10 @@
 /** Printing: pages of a fixed size with our own header, shown first, then handed to the system's print dialog. */
 
-import { api, onAndroid } from './api.js';
+import { api, onAndroid, pickSave } from './api.js';
 import { clear, h, withBreaks } from './dom.js';
 import { renderChapter } from './reader.js';
 import { PAPERS } from './settings.js';
+import { sheetBlocks, sheetFodt } from './sheet.js';
 
 const MM = 96 / 25.4;
 const MARGIN = { top: 16, bottom: 16, side: 18 };
@@ -257,6 +258,7 @@ export function openPrint(view, settings, saveSettings) {
   const kinds = [['chapter', 'This chapter']];
   if (view.selection.size) kinds.unshift(['selection', 'The selected verses']);
   if (view.parallel) kinds.splice(view.selection.size ? 2 : 1, 0, ['comparison', 'The comparison']);
+  if (view.sheet) kinds.push(['sheet', view.selection.size ? 'A study sheet of the selected verses' : 'A study sheet of this chapter']);
   if (view.user.notes.length) kinds.push(['notes', 'All my notes']);
   let what = view.initial && kinds.some(([k]) => k === view.initial) ? view.initial : kinds[0][0];
 
@@ -265,9 +267,25 @@ export function openPrint(view, settings, saveSettings) {
   const pagesHost = h('div', { class: 'print-pages' });
   const go = h('button', { type: 'button', class: 'primary' }, 'Print…');
   const close = h('button', { type: 'button' }, 'Close');
+  let sheet = null;
+  const toPaper = h('button', {
+    type: 'button',
+    title: 'Save the sheet as a document that GRT Paper opens and edits',
+    onclick: async () => {
+      if (!sheet) return;
+      const path = await pickSave('Send the sheet to GRT Paper', `${sheet.title}.fodt`, [{ name: 'OpenDocument text', extensions: ['fodt'] }]);
+      if (!path) return;
+      try {
+        await api.saveText(path, sheetFodt(sheet));
+        count.textContent = 'Saved. Open the file in GRT Paper.';
+      } catch (error) {
+        count.textContent = String(error);
+      }
+    },
+  }, 'Send to Paper…');
   const shell = h('div', { id: 'print-view', role: 'dialog', 'aria-label': 'Print' },
     h('div', { class: 'print-toolbar', role: 'toolbar', 'aria-label': 'Print' },
-      h('strong', {}, 'Print'), controls, h('span', { class: 'print-spacer' }), count, close, go),
+      h('strong', {}, 'Print'), controls, h('span', { class: 'print-spacer' }), count, toPaper, close, go),
     pagesHost);
   document.body.append(shell);
 
@@ -279,7 +297,13 @@ export function openPrint(view, settings, saveSettings) {
       let blocks;
       let className = '';
       let header = { left: view.title, right: view.module.abbreviation };
-      if (what === 'notes') {
+      toPaper.hidden = what !== 'sheet';
+      if (what === 'sheet') {
+        sheet = await view.sheet();
+        blocks = sheetBlocks(sheet);
+        header = { left: 'Study sheet', right: view.module.abbreviation };
+        className = 'sheet';
+      } else if (what === 'notes') {
         blocks = notesBlocks(await view.describeNotes());
         header = { left: 'My notes', right: view.module.abbreviation };
       } else if (what === 'comparison') {
@@ -321,7 +345,7 @@ export function openPrint(view, settings, saveSettings) {
       control('What', select(kinds, what, (v) => { what = v; drawControls(); rebuild(); })),
       control('Paper', select(Object.entries(PAPERS).map(([id, p]) => [id, p.label]), print.paper, change('paper'))),
       control('Text', select([8, 9, 10, 11, 12, 13, 14, 16].map((n) => [String(n), `${n} pt`]), String(print.size), (v) => change('size')(Number(v)))),
-      what === 'notes' ? null : toggle('Verse numbers', print.numbers, change('numbers')),
+      what === 'notes' || what === 'sheet' ? null : toggle('Verse numbers', print.numbers, change('numbers')),
       what === 'chapter' || what === 'selection' ? [
         toggle('Headings', print.headings, change('headings')),
         toggle('Notes of the edition', print.editionNotes, change('editionNotes')),

@@ -360,3 +360,92 @@ describe('video topics', () => {
     expect(topicsOf({ title: 'Why Liberals Love Ugly Art', tags: [] })).toEqual([]);
   });
 });
+
+describe('words that part between two translations', () => {
+  it('marks only what the longest shared run leaves out, ignoring case and accents', async () => {
+    const { changedWords, markChanged } = await import('../src/js/diff.js');
+    const { left, right } = changedWords('In principio era il Verbo', 'In principio era la Parola');
+    expect([...left]).toEqual([3, 4]);
+    expect([...right]).toEqual([3, 4]);
+    expect(changedWords('Perché Dio', 'perche dio').right.size).toBe(0);
+    const { nodes, next } = markChanged('era la Parola,\ne', new Set([1, 2]));
+    expect(next).toBe(4);
+    expect(nodes.filter((n) => typeof n !== 'string').map((n) => n.outerHTML)).toEqual(['<mark class="diff">la</mark>', '<mark class="diff">Parola</mark>', '<br>']);
+  });
+
+  it('compares columns of the same language only', async () => {
+    const { renderParallel } = await import('../src/js/reader.js');
+    const modules = [
+      { abbreviation: 'MAR', language: 'it', direction: 'ltr' },
+      { abbreviation: 'RIV', language: 'it', direction: 'ltr' },
+      { abbreviation: 'VUL', language: 'la', direction: 'ltr' },
+    ];
+    const data = { primary: { chapter: 1 }, rows: [{ canon: 'John.1.1', cells: [
+      [{ verse: 1, chapter: 1, text: 'In principio era il Verbo' }],
+      [{ verse: 1, chapter: 1, text: 'Nel principio era la Parola' }],
+      [{ verse: 1, chapter: 1, text: 'In principio erat Verbum' }],
+    ] }] };
+    const table = renderParallel({ data, modules, bookNames: ['Giovanni', 'Giovanni', 'Ioannes'], settings: { verseNumbers: true, original: {}, parallel: { differences: true } } });
+    const marks = [...table.querySelectorAll('td')].map((td) => [...td.querySelectorAll('mark.diff')].map((m) => m.textContent));
+    expect(marks).toEqual([['In', 'il', 'Verbo'], ['Nel', 'la', 'Parola'], []]);
+    expect(table.querySelectorAll('th')[2].textContent).toContain('another language, not compared');
+  });
+});
+
+describe('the atlas', () => {
+  it('names years and eras, and frames the places it shows', async () => {
+    const { eraLabel, project, viewAround, yearLabel, yearsLabel } = await import('../src/js/atlas.js');
+    expect(yearLabel(-1445)).toBe('1446 BC');
+    expect(yearLabel(30)).toBe('AD 30');
+    expect(yearsLabel(-1445, -1405)).toBe('1446-1406 BC');
+    expect(yearsLabel(-3, 30)).toBe('4 BC to AD 30');
+    expect([eraLabel(-4003), eraLabel(-1445), eraLabel(-586), eraLabel(-3), eraLabel(30), eraLabel(1054)])
+      .toEqual(['4000s BC', '1000s BC', '500s BC', 'The first century BC', 'The first century AD', 'AD 1000s']);
+    const jerusalem = project(31.7683, 35.2137);
+    expect(Math.round(jerusalem.x)) .toBe(Math.round((35.2137 + 12) * Math.cos((32 * Math.PI) / 180) * 100));
+    const view = viewAround([jerusalem, project(31.7054, 35.2024)]);
+    expect(view.w / view.h).toBeCloseTo(1.5, 5);
+    expect(view.x < jerusalem.x && jerusalem.x < view.x + view.w).toBe(true);
+  });
+});
+
+describe('graphs for GRT Graphs', () => {
+  it('writes the references of a verse and the links between notes as JSON Canvas', async () => {
+    const { notesCanvas, referencesCanvas } = await import('../src/js/graph.js');
+    const refs = JSON.parse(referencesCanvas({ label: 'Gv 3,16', text: 'Dio ha tanto amato' }, [{ label: 'love', targets: [{ label: '1 Gv 4,9', text: 'In questo' }, { label: 'Rm 5,8', text: '' }] }]));
+    expect(refs.nodes.map((n) => n.id)).toEqual(['verse', 'ref1', 'ref2']);
+    expect(refs.nodes.every((n) => n.type === 'text' && Number.isInteger(n.x) && n.width > 0)).toBe(true);
+    expect(refs.edges).toEqual([
+      { id: 'e1', fromNode: 'verse', toNode: 'ref1', toEnd: 'arrow', label: 'love' },
+      { id: 'e2', fromNode: 'verse', toNode: 'ref2', toEnd: 'arrow', label: 'love' },
+    ]);
+    const notes = JSON.parse(notesCanvas([
+      { label: 'Gv 3,16', note: { id: 'a', text: 'Love', tags: ['love'], links: ['b', 'gone'] } },
+      { label: 'Rm 5,8', note: { id: 'b', text: 'Proof', tags: [], links: [] } },
+    ]));
+    expect(notes.nodes[0].text).toBe('**Gv 3,16**\n\nLove\n\n#love');
+    expect(notes.edges).toEqual([{ id: 'a-b', fromNode: 'a', toNode: 'b', toEnd: 'arrow' }]);
+  });
+
+  it('says who signed a pack', async () => {
+    const { sealText } = await import('../src/js/library.js');
+    expect(sealText({ state: 'signed', by: 'GRT Project', key: '4f4d552e5af3eacd3e63' })).toBe('Signed by GRT Project, key 4f4d 552e 5af3 eacd.');
+    expect(sealText({ state: 'unsigned' })).toBe('Not signed: nothing says who made it.');
+    expect(sealText(null)).toBe('Signature not checked yet.');
+    expect(sealText(null, true)).toBe('Part of the program.');
+  });
+});
+
+describe('highlights', () => {
+  it('keep their parts on either side of verses highlighted again', async () => {
+    const { cutHighlights } = await import('../src/js/main.js');
+    const order = [1, 2, 3, 4, 5].map((v) => ({ verse: v, canon: `Gen.1.${v}`, canonEnd: `Gen.1.${v}` }));
+    const kept = cutHighlights([{ start: 'Gen.1.1', end: 'Gen.1.5', color: 'yellow' }, { start: 'Gen.2.1', end: 'Gen.2.2', color: 'blue' }], order, order[2], order[2]);
+    expect(kept).toEqual([
+      { start: 'Gen.1.1', end: 'Gen.1.2', color: 'yellow' },
+      { start: 'Gen.1.4', end: 'Gen.1.5', color: 'yellow' },
+      { start: 'Gen.2.1', end: 'Gen.2.2', color: 'blue' },
+    ]);
+    expect(cutHighlights([{ start: 'Gen.1.2', end: 'Gen.1.3', color: 'pink' }], order, order[1], order[3])).toEqual([]);
+  });
+});

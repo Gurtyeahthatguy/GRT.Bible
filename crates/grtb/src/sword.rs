@@ -366,24 +366,25 @@ fn read_testament(files: &mut dyn Files, dir: &str, prefix: &str, conf: &Conf) -
 
 fn remove_between(text: &str, open: &str, close: &str, found: &mut Vec<String>) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
+    // Lowering ASCII keeps every byte in place, so positions found in `hay` cut `text` too.
+    let hay = text.to_ascii_lowercase();
     let lower_open = open.to_ascii_lowercase();
+    let lower_close = close.to_ascii_lowercase();
+    let mut at = 0;
     loop {
-        let hay = rest.to_ascii_lowercase();
-        let Some(start) = hay.find(&lower_open) else {
-            out.push_str(rest);
+        let Some(start) = hay[at..].find(&lower_open).map(|i| at + i) else {
+            out.push_str(&text[at..]);
             break;
         };
-        out.push_str(&rest[..start]);
+        out.push_str(&text[at..start]);
         let tag_end = hay[start..].find('>').map(|i| start + i + 1).unwrap_or(hay.len());
-        let self_closing = rest[start..tag_end].ends_with("/>");
-        if self_closing {
-            rest = &rest[tag_end..];
+        if text[start..tag_end].ends_with("/>") {
+            at = tag_end;
             continue;
         }
-        let end = hay[tag_end..].find(&close.to_ascii_lowercase()).map(|i| tag_end + i).unwrap_or(hay.len());
-        found.push(rest[start..end].to_string());
-        rest = rest.get(end + close.len()..).unwrap_or("");
+        let end = hay[tag_end..].find(&lower_close).map(|i| tag_end + i).unwrap_or(hay.len());
+        found.push(text[start..end].to_string());
+        at = (end + close.len()).min(text.len());
     }
     out
 }

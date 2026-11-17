@@ -33,10 +33,18 @@ function fakeBackend() {
       books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'HAY.grtb', origin: null },
     { kind: 'dictionary', abbreviation: 'EAS', title: 'Easton', language: 'en', direction: 'ltr', versification: 'english', bundled: false,
       books: [], summary: '2 entries', missingBooks: [], license: 'Public Domain', source: '', fileName: 'EAS.grtb', origin: null },
+    { kind: 'apparatus', abbreviation: 'APP', title: 'Apparatus', language: 'grc', direction: 'ltr', versification: 'hebrew', bundled: false,
+      books: [], summary: '2 entries', missingBooks: [], license: 'CC BY 4.0', source: '', fileName: 'APP.grtb', origin: { file: 'APP.grtb', installed: '2026-11-14' } },
+    { kind: 'harmony', abbreviation: 'EUS', title: 'Eusebian Canons', language: 'en', direction: 'ltr', versification: 'hebrew', bundled: false,
+      books: [], summary: '1 entries', missingBooks: [], license: 'Public domain', source: '', fileName: 'EUS.grtb', origin: null },
+    { kind: 'atlas', abbreviation: 'ATL', title: 'Places and events', language: 'en', direction: 'ltr', versification: 'hebrew', bundled: false,
+      books: [], summary: '3 entries', missingBooks: [], license: 'CC BY-SA 4.0', source: '', fileName: 'ATL.grtb',
+      origin: { file: 'ATL.grtb', installed: '2026-11-14', seal: { state: 'signed', by: 'GRT Project', key: '4f4d552e5af3eacd3e63' } } },
   );
   const offset = (module, book) => (module === 'BBB' && book === 'Ps' ? 1 : 0);
   const calls = [];
   const files = {};
+  const answers = [];
   const saved = { user: null, settings: null };
   const user = {
     reading: { current: { module: 'BBB', ref: 'Ps.23.1', offset: 0 }, history: [] },
@@ -132,12 +140,27 @@ function fakeBackend() {
         lexicon: [{ module: 'EAS', title: 'Easton', entry: { id: 1, parent: null, key: 'AGAPAO', title: 'AGAPAO', body: '<p>to love</p>', spans: [] } }],
         occurrences: [{ book: 'John', chapter: 3, verse: 16, text: 'ἠγάπησεν', parsing: 'verb, aorist' }],
       };
+      case 'apparatus': return [{ module: 'APP', title: 'Apparatus', legend: '<p><i>WH</i> Westcott and Hort</p>', items: [
+        { id: 2, parent: null, key: '', title: 'Gen.2.2', body: '<p><b>μονογενὴς θεὸς</b> <i>WH NA28</i> ] ὁ μονογενὴς υἱός <i>RP</i></p>', spans: ['Gen.2.2'] }] }];
+      case 'harmony': return [{ module: 'EUS', title: 'Eusebian Canons', legend: '', items: [
+        { id: 1, parent: null, key: '1.1', title: 'Canon I · Mt, Mk, Lk, Jn', body: '', spans: ['Matt.3.1-Matt.3.2', 'John.1.1'] }] }];
+      case 'atlas_places': return [{ id: 5, key: 'Eden', title: 'Eden', lat: 31.5, lon: 35.5, count: 3 }, { id: 6, key: 'Havilah', title: 'Havilah', lat: 25, lon: 45, count: 1 }];
+      case 'atlas_search': return [{ id: 6, key: 'Havilah', title: 'Havilah', lat: 25, lon: 45, count: 1 }];
+      case 'atlas_timeline': return [
+        { id: 7, title: 'Creation', first: -4003, last: -4003, span: 'Gen.1.1-Gen.2.3' },
+        { id: 8, title: 'The Exodus', first: -1446, last: -1446, span: 'Exod.12.1-Exod.12.51' },
+        { id: 9, title: 'Birth of Jesus', first: -4, last: -4, span: 'Luke.2.1-Luke.2.20' }];
+      case 'atlas_shapes': return [['land', 'M0 0 L4000 0 L4000 3000 Z'], ['river', 'M3900 1800 L3950 1900']];
+      case 'module_verify': return { state: 'unknown', key: 'abcdef0123456789abcd' };
+      case 'plugin:dialog|save': case 'plugin:dialog|open': return answers.shift() ?? null;
+      case 'plugin:dialog|ask': return true;
+      case 'save_text': files[args.path] = args.text; return null;
       case 'user_save': saved.user = structuredClone(args.data); return null;
       case 'settings_save': saved.settings = structuredClone(args.settings); return null;
       default: return null;
     }
   });
-  return { invoke, calls, saved, files };
+  return { invoke, calls, saved, files, answers };
 }
 
 let backend;
@@ -361,7 +384,7 @@ describe('the interface', () => {
     await wait(120);
     const panel = document.querySelector('#panel');
     expect(panel.querySelector('.panel-head h2').textContent).toBe('Library');
-    expect([...panel.querySelectorAll('.tabs button')].map((b) => b.textContent)).toEqual(['This passage', 'Word', 'Dictionary', 'Installed']);
+    expect([...panel.querySelectorAll('.tabs button')].map((b) => b.textContent)).toEqual(['This passage', 'Word', 'Dictionary', 'Map', 'Timeline', 'Installed']);
     const group = panel.querySelector('.group');
     expect(group.querySelector('b').textContent).toBe('beginning ');
     const refs = [...group.querySelectorAll('.ref')];
@@ -409,7 +432,13 @@ describe('the interface', () => {
     [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Installed').click();
     await wait(60);
     const heads = [...panel.querySelectorAll('.kind-head')].map((h) => h.textContent);
-    expect(heads).toEqual(['Bibles (3)', 'Commentaries (2)', 'Cross-references (1)', 'Dictionaries and lexicons (1)']);
+    expect(heads).toEqual(['Bibles (3)', 'Commentaries (2)', 'Cross-references (1)', 'Dictionaries and lexicons (1)', 'Critical apparatuses (1)', 'Harmonies of the Gospels (1)', 'Atlases (1)']);
+    expect(panel.querySelector('.card.module[data-module="ATL"] .seal').textContent).toBe('Signed by GRT Project, key 4f4d 552e 5af3 eacd.');
+    const app2 = panel.querySelector('.card.module[data-module="APP"]');
+    expect(app2.querySelector('.seal').textContent).toBe('Signature not checked yet.');
+    [...app2.querySelectorAll('button')].find((b) => b.textContent === 'Check the signature').click();
+    await wait(60);
+    expect(app2.querySelector('.seal').textContent).toBe('Signed by a key this program does not know: abcd ef01 2345 6789.');
     const tsk = panel.querySelector('.card.module[data-module="TSK"]');
     expect(tsk.textContent).toContain('Licence: Public Domain');
     expect(tsk.textContent).toContain('Installed from TSK.grtb on 2026-10-27.');
@@ -420,13 +449,120 @@ describe('the interface', () => {
     key(document.body, 'Escape');
   });
 
+  it('shows variants, parallels and places, and sends the passage to Graphs and to Paper', async () => {
+    const panel = document.querySelector('#panel');
+    [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'This passage').click();
+    await wait(250);
+    expect(panel.querySelector('.apparatus .entry b').textContent).toBe('μονογενὴς θεὸς');
+    expect(panel.querySelector('.apparatus .entry').getAttribute('lang')).toBe('grc');
+    expect(panel.querySelector('.apparatus .sigla summary').textContent).toBe('Sigla');
+    const columns = panel.querySelectorAll('.parallel-column');
+    expect(columns).toHaveLength(2);
+    expect(columns[0].textContent).toContain('Dominus regit me');
+    const places = [...panel.querySelectorAll('.lib-section')].find((section) => section.querySelector('h3')?.textContent === 'Places in this chapter');
+    expect([...places.querySelectorAll('.topic-list button')].map((b) => b.textContent)).toEqual(['Eden', 'Havilah']);
+    backend.answers.push('/out/refs.canvas');
+    [...panel.querySelectorAll('button')].find((b) => b.textContent === 'Send to Graphs…').click();
+    await wait(200);
+    const canvas = JSON.parse(backend.files['/out/refs.canvas']);
+    expect(canvas.nodes).toHaveLength(3);
+    expect(canvas.edges.map((e) => [e.fromNode, e.label])).toEqual([['verse', 'beginning'], ['verse', 'beginning']]);
+    [...panel.querySelectorAll('button')].find((b) => b.textContent === 'Study sheet…').click();
+    await wait(300);
+    const view = document.querySelector('#print-view');
+    expect(view.querySelector('select').value).toBe('sheet');
+    const pages = view.querySelector('.print-pages').textContent;
+    for (const part of ['Gen 2,2-3 · AAA', 'Dominus regit me', 'My notes', 'Light before the sun.', 'Commentary · MHC', 'Variants', 'μονογενὴς θεὸς']) expect(pages).toContain(part);
+    backend.answers.push('/out/sheet.fodt');
+    [...view.querySelectorAll('button')].find((b) => b.textContent === 'Send to Paper…').click();
+    await wait(100);
+    const fodt = backend.files['/out/sheet.fodt'];
+    expect(fodt).toContain('office:mimetype="application/vnd.oasis.opendocument.text"');
+    expect(fodt).toContain('<text:h text:style-name="Heading_20_2" text:outline-level="2">Variants</text:h>');
+    expect(fodt).toContain('<text:span text:style-name="Strong">1 </text:span>Dominus regit me');
+    key(document.body, 'Escape');
+  });
+
+  it('puts the places of the chapter on a map and the events in order of time', async () => {
+    const panel = document.querySelector('#panel');
+    [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Map').click();
+    await wait(200);
+    const map = panel.querySelector('svg.atlas-map');
+    expect(map.querySelectorAll('.land')).toHaveLength(1);
+    expect([...map.querySelectorAll('.place text')].map((t) => t.textContent)).toEqual(['Eden', 'Havilah']);
+    expect(map.getAttribute('viewBox').split(' ').map(Number).every(Number.isFinite)).toBe(true);
+    map.querySelector('.place').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await wait(100);
+    expect(panel.querySelector('.place-details h4').textContent).toBe('Eden');
+    await type(panel.querySelector('input[aria-label="Find a place"]'), 'hav');
+    await wait(60);
+    [...panel.querySelectorAll('.headwords button')].find((b) => b.textContent === 'Havilah').click();
+    await wait(100);
+    expect(map.querySelectorAll('.place')).toHaveLength(1);
+    expect(panel.querySelector('.place-details h4').textContent).toBe('Havilah');
+    [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === 'Timeline').click();
+    await wait(150);
+    expect([...panel.querySelectorAll('.timeline .era')].map((e) => e.textContent)).toEqual(['4000s BC', '1000s BC', 'The first century BC']);
+    expect([...panel.querySelectorAll('.timeline .event.here .link')].map((b) => b.textContent)).toEqual(['Creation']);
+    expect(panel.querySelector('.timeline .event .when').textContent).toBe('4004 BC');
+  });
+
+  it('moves through tabs and verses from the keyboard, and gives every control a name', async () => {
+    const panel = document.querySelector('#panel');
+    const selected = () => panel.querySelector('[role="tab"][aria-selected="true"]').textContent;
+    expect(selected()).toBe('Timeline');
+    key(panel.querySelector('[role="tablist"]'), 'ArrowRight');
+    await wait(100);
+    expect(selected()).toBe('Installed');
+    expect(document.activeElement.textContent).toBe('Installed');
+    key(panel.querySelector('[role="tablist"]'), 'Home');
+    await wait(200);
+    expect(selected()).toBe('This passage');
+    expect(document.querySelector('#btn-location').textContent).toContain('2');
+    while (document.querySelector('#reader .verse.selected')) {
+      key(document.body, 'Escape');
+      await wait();
+    }
+    document.querySelector('#reader .verse[data-verse="1"]').click();
+    await wait();
+    key(document.body, 'ArrowDown');
+    await wait();
+    expect([...document.querySelectorAll('#reader .verse.selected')].map((v) => v.dataset.verse)).toEqual(['2']);
+    key(document.body, 'ArrowDown', { shiftKey: true });
+    await wait();
+    expect([...document.querySelectorAll('#reader .verse.selected')].map((v) => v.dataset.verse)).toEqual(['2', '3']);
+    expect(document.querySelector('.skip-link').getAttribute('href')).toBe('#reader');
+    const nameless = [];
+    const check = (where) => {
+      for (const el of document.querySelectorAll('button, input, select, textarea, [role="button"]')) {
+        if (el.closest('[hidden]') || el.type === 'hidden') continue;
+        const labelled = el.getAttribute('aria-label') || el.getAttribute('title') || el.labels?.length || el.closest('label');
+        const name = ['BUTTON', 'G'].includes(el.tagName.toUpperCase()) || el.getAttribute('role') === 'button' ? el.textContent.trim() || labelled : labelled;
+        if (!name) nameless.push(`${where}: ${el.outerHTML.slice(0, 80)}`);
+      }
+    };
+    for (const tab of ['This passage', 'Word', 'Dictionary', 'Map', 'Timeline', 'Installed']) {
+      [...panel.querySelectorAll('.tabs button')].find((b) => b.textContent === tab).click();
+      await wait(200);
+      check(`Library ${tab}`);
+    }
+    document.querySelector('#btn-study').click();
+    await wait(100);
+    for (const tab of ['Today', 'Notes', 'Plans', 'Highlights', 'Bookmarks', 'History']) {
+      [...document.querySelectorAll('#panel .tabs button')].find((b) => b.textContent === tab).click();
+      await wait(150);
+      check(`Study ${tab}`);
+    }
+    expect(nameless).toEqual([]);
+  });
+
   it('prints the chapter, the selection or the notes on fixed pages', async () => {
     key(document.body, 'p', { ctrlKey: true });
     await wait(60);
     const view = document.querySelector('#print-view');
     expect(view).not.toBeNull();
     const what = view.querySelector('select');
-    expect([...what.options].map((o) => o.value)).toEqual(['selection', 'chapter', 'notes']);
+    expect([...what.options].map((o) => o.value)).toEqual(['selection', 'chapter', 'sheet', 'notes']);
     expect(view.querySelectorAll('.print-page').length).toBeGreaterThan(0);
     expect(view.querySelector('.print-head').textContent).toBe('Genesi 2AAA');
     what.value = 'notes';

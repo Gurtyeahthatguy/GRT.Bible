@@ -1,6 +1,7 @@
 /** The chapter as semantic HTML: headings, paragraphs or one verse per line, notes at the end. */
 
 import { h, withBreaks } from './dom.js';
+import { changedWords, markChanged, wordsOf } from './diff.js';
 import { markPhrase } from './phrase.js';
 import { isGreek, isHebrew, shaper, shortParsing, transliterateGreek } from './original.js';
 import { compareOsis } from './reference.js';
@@ -130,26 +131,50 @@ export function renderChapter({ data, module, bookName, settings, user, videos =
   return article;
 }
 
-/** Translations side by side, one row per verse of the first. */
+/** Translations side by side, one row per verse of the first; with differences on, words that part from the first column are marked. */
 export function renderParallel({ data, modules, bookNames, settings }) {
   const table = h('table', { class: 'parallel' });
   const head = h('tr', {});
+  const compare = Boolean(settings.parallel?.differences);
   modules.forEach((m, i) => {
-    head.append(h('th', { scope: 'col', lang: m.language, dir: m.direction }, `${m.abbreviation} · ${bookNames[i]}`));
+    const apart = compare && i > 0 && m.language !== modules[0].language;
+    head.append(h('th', { scope: 'col', lang: m.language, dir: m.direction }, `${m.abbreviation} · ${bookNames[i]}`,
+      apart ? h('span', { class: 'fine' }, ' · another language, not compared') : null));
   });
   table.append(h('thead', {}, head));
   const body = h('tbody', {});
+  const joined = (cell) => cell.map((p) => p.text).join(' ');
   for (const row of data.rows) {
     const tr = h('tr', { dataset: { canon: row.canon } });
+    // The first column is marked where it parts from every other column in its language.
+    const peers = row.cells.map((cell, i) => (i > 0 && modules[i].language === modules[0].language ? changedWords(joined(row.cells[0]), joined(cell)) : null));
+    const marked = row.cells.map((_, i) => {
+      if (!compare) return new Set();
+      if (i > 0) return peers[i]?.right || new Set();
+      const all = peers.filter(Boolean);
+      if (!all.length) return new Set();
+      return new Set([...all[0].left].filter((w) => all.every((p) => p.left.has(w))));
+    });
     row.cells.forEach((cell, i) => {
       const m = modules[i];
       const td = h('td', { lang: m.language, dir: m.direction });
+      let word = 0;
       for (const piece of cell) {
         const label = piece.chapter !== data.primary.chapter && i > 0 ? `${piece.chapter},${piece.verse}` : String(piece.verse);
+        const text = shaper(m.language, settings.original)(piece.text);
+        let content;
+        if (compare && marked[i].size) {
+          const { nodes, next } = markChanged(text, marked[i], word);
+          content = nodes;
+          word = next;
+        } else {
+          content = withBreaks(text);
+          word += wordsOf(piece.text).length;
+        }
         td.append(
           h('span', { class: 'verse', dataset: i === 0 ? { verse: piece.verse, canon: row.canon } : { } },
             settings.verseNumbers ? h('sup', { class: 'vn' }, label) : null,
-            h('span', { class: 'vt' }, withBreaks(shaper(m.language, settings.original)(piece.text))), ' '),
+            h('span', { class: 'vt' }, content), ' '),
         );
       }
       if (!cell.length && i > 0) td.append(h('span', { class: 'empty', 'aria-label': 'No corresponding verse' }, '·'));

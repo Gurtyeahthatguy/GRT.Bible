@@ -10,6 +10,7 @@ pub mod module;
 pub mod morph;
 pub mod passage;
 pub mod plans;
+pub mod signing;
 pub mod query;
 pub mod refs;
 pub mod source;

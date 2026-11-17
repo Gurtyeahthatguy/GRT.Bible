@@ -153,6 +153,13 @@
     plans: () => Object.entries(window.__PREVIEW_PLANS__ || {}).map(([id, p]) => ({ id, title: p.title, days: p.days.length })),
     plan_schedule: ({ id }) => (window.__PREVIEW_PLANS__ || {})[id]?.days || [],
     read_text: () => { throw new Error('The preview cannot read files.'); },
+    apparatus: () => [],
+    harmony: () => [],
+    atlas_places: () => [],
+    atlas_search: () => [],
+    atlas_timeline: () => [],
+    atlas_shapes: () => [],
+    module_verify: () => { throw new Error('The preview cannot check signatures.'); },
     topics: ({ at }) => packs.filter((p) => p.meta.kind === 'dictionary').map((p) => {
       const n = pack(at);
       const ids = new Set(p.spans.filter((s) => s.first <= n && s.last >= n).map((s) => s.entry));

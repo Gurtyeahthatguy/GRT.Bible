@@ -11,6 +11,7 @@ import { libraryTabs, renderLibrary } from './library.js';
 import { askAboutVideos, openPreferences } from './preferences.js';
 import { closePrint, openPrint, printPreviewOpen } from './print.js';
 import { renderChapter, renderInterlinear, renderParallel } from './reader.js';
+import { buildSheet } from './sheet.js';
 import { compareOsis, formatReference, splitOsis } from './reference.js';
 import { renderSearch } from './search.js';
 import { applyAppearance, HIGHLIGHT_COLORS, normalise } from './settings.js';
@@ -167,7 +168,11 @@ function scrollToVerse(verse, offset = 0) {
 
 // Opening chapters
 
+/** Only the latest chapter asked for is shown, however the answers arrive. */
+let opening = 0;
+
 async function openPlace(module, book, chapter, verse = null, verseEnd = null, { offset = 0, select = false } = {}) {
+  const ticket = ++opening;
   let info = moduleInfo(module) || moduleInfo(state.settings.module) || state.modules[0];
   if (!info) return;
   if (!info.books.some((b) => b.osis === book)) {
@@ -180,35 +185,39 @@ async function openPlace(module, book, chapter, verse = null, verseEnd = null, {
   try {
     data = await api.chapter(info.abbreviation, book, chapter);
   } catch (error) {
-    toast(String(error), 5000);
+    if (ticket === opening) toast(String(error), 5000);
     return;
   }
-  state.module = info.abbreviation;
-  state.book = data.book;
-  state.chapter = data.chapter;
-  state.data = data;
-  state.parallel = null;
-  if (state.settings.module !== info.abbreviation) setSetting('module', info.abbreviation);
+  let parallel = null;
   if (state.settings.parallel.enabled) {
     const others = state.settings.parallel.modules.filter((m) => m !== info.abbreviation && moduleInfo(m));
     if (others.length) {
       try {
-        state.parallel = await api.parallel([info.abbreviation, ...others], data.book, data.chapter);
+        parallel = await api.parallel([info.abbreviation, ...others], data.book, data.chapter);
       } catch (error) {
         toast(String(error), 5000);
       }
     }
   }
-  state.words = null;
-  if (state.settings.interlinear && info.words && !state.parallel) {
+  let words = null;
+  if (state.settings.interlinear && info.words && !parallel) {
     try {
-      state.words = await api.chapterWords(info.abbreviation, data.book, data.chapter);
+      words = await api.chapterWords(info.abbreviation, data.book, data.chapter);
     } catch (error) {
       toast(String(error), 5000);
     }
   }
+  if (ticket !== opening) return;
+  state.module = info.abbreviation;
+  state.book = data.book;
+  state.chapter = data.chapter;
+  state.data = data;
+  state.parallel = parallel;
+  state.words = words;
+  if (state.settings.module !== info.abbreviation) setSetting('module', info.abbreviation);
   state.selection = [];
   state.anchor = null;
+  state.phrase = null;
   if (data.verses.length) visit(data.verses[0].canon);
   render();
   if (state.panel === 'library' && state.libraryTab === 'passage') refreshLibrarySoon();
@@ -296,11 +305,22 @@ function drawParallelBar() {
       box.addEventListener('change', () => {
         let list = state.settings.parallel.modules.filter((x) => x !== m.abbreviation);
         if (box.checked) list = [...list, m.abbreviation].slice(-3);
-        setSetting('parallel', { enabled: true, modules: list });
+        setSetting('parallel', { ...state.settings.parallel, enabled: true, modules: list });
         reopen();
       });
       return h('label', { class: 'check', title: m.title }, box, h('span', {}, m.abbreviation));
-    }));
+    }),
+    differencesToggle());
+}
+
+function differencesToggle() {
+  const box = h('input', { type: 'checkbox' });
+  box.checked = state.settings.parallel.differences;
+  box.addEventListener('change', () => {
+    setSetting('parallel', { ...state.settings.parallel, differences: box.checked });
+    reopen();
+  });
+  return h('label', { class: 'check differences', title: 'Mark the words that part from the first column, in translations of the same language' }, box, h('span', {}, 'Differences'));
 }
 
 function reopen() {
@@ -309,6 +329,29 @@ function reopen() {
 }
 
 // Selection
+
+/** Tabs reached with Tab once, then moved through with the arrow keys, Home and End. */
+function tabList(label, tabs, current, pick) {
+  const nav = h('nav', { class: 'tabs', role: 'tablist', 'aria-label': label }, tabs.map((t) => h('button', {
+    type: 'button',
+    role: 'tab',
+    'aria-selected': t.id === current ? 'true' : 'false',
+    tabindex: t.id === current ? '0' : '-1',
+    dataset: { tab: t.id },
+    onclick: () => pick(t.id),
+  }, t.label)));
+  nav.addEventListener('keydown', (event) => {
+    const keys = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const at = tabs.findIndex((t) => t.id === current);
+    const step = keys[event.key];
+    const next = Number.isFinite(step) ? (at + step + tabs.length) % tabs.length : step < 0 ? 0 : tabs.length - 1;
+    pick(tabs[next].id);
+  });
+  return nav;
+}
 
 /** The selection after clicking a verse, always one unbroken run. */
 export function nextSelection(current, verse, anchor, order) {
@@ -332,6 +375,34 @@ export function nextSelection(current, verse, anchor, order) {
   return [verse];
 }
 
+/** Moves or stretches the selection from the keyboard; false when there is nothing to move. */
+function moveSelection(key, stretch) {
+  const order = (state.data?.verses || []).map((v) => v.verse);
+  if (!order.length) return false;
+  if (key === 'Enter') {
+    if (state.selection.length) return false;
+    const found = topVerse();
+    state.selection = [found?.verse ?? order[0]];
+    state.anchor = state.selection[0];
+  } else {
+    if (!state.selection.length) return false;
+    const down = key === 'ArrowDown';
+    const edge = down ? state.selection[state.selection.length - 1] : state.selection[0];
+    const next = order[order.indexOf(edge) + (down ? 1 : -1)];
+    if (next === undefined) return true;
+    if (stretch) {
+      state.selection = down ? [...state.selection, next] : [next, ...state.selection];
+    } else {
+      state.selection = [next];
+      state.anchor = next;
+    }
+  }
+  showSelection();
+  const verse = state.selection[key === 'ArrowUp' ? 0 : state.selection.length - 1];
+  $(`#reader .verse[data-verse="${verse}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  return true;
+}
+
 function selectedVerses() {
   const set = new Set(state.selection);
   return (state.data?.verses || []).filter((v) => set.has(v.verse));
@@ -350,11 +421,13 @@ function showSelection() {
     el.classList.toggle('selected', set.has(Number(el.dataset.verse)));
   }
   const bar = $('#selection-bar');
-  if (!state.selection.length) {
+  const verses = selectedVerses();
+  // Verses no longer on the page select nothing.
+  if (!verses.length) {
+    state.selection = [];
     bar.hidden = true;
     return;
   }
-  const verses = selectedVerses();
   const first = verses[0];
   const last = verses[verses.length - 1];
   const bookmarked = state.user.bookmarks.some((b) => b.ref === first.canon);
@@ -415,12 +488,30 @@ function clearSelection() {
   if (state.panel === 'videos') refreshPanelSoon();
 }
 
+/** Highlights with the selected verses taken out: one that runs past them keeps its parts on either side. */
+export function cutHighlights(highlights, order, first, last) {
+  const start = first.canon;
+  const end = last.canonEnd;
+  const before = order[order.indexOf(first) - 1]?.canonEnd;
+  const after = order[order.indexOf(last) + 1]?.canon;
+  const out = [];
+  for (const x of highlights) {
+    if (compareOsis(x.end, start) < 0 || compareOsis(x.start, end) > 0) {
+      out.push(x);
+      continue;
+    }
+    if (before && compareOsis(x.start, start) < 0) out.push({ ...x, end: before });
+    if (after && compareOsis(x.end, end) > 0) out.push({ ...x, start: after });
+  }
+  return out;
+}
+
 function highlight(color) {
   const verses = selectedVerses();
   if (!verses.length) return;
   const start = verses[0].canon;
   const end = verses[verses.length - 1].canonEnd;
-  state.user.highlights = state.user.highlights.filter((x) => compareOsis(x.end, start) < 0 || compareOsis(x.start, end) > 0);
+  state.user.highlights = cutHighlights(state.user.highlights, state.data.verses, verses[0], verses[verses.length - 1]);
   if (color) state.user.highlights.push({ start, end, color });
   saveUserSoon();
   render();
@@ -561,27 +652,21 @@ async function showPanel(kind, options = {}) {
     const tabs = libraryTabs(state.all);
     if (!tabs.some((t) => t.id === state.libraryTab)) state.libraryTab = 'passage';
     if (state.settings.library.tab !== state.libraryTab) setSetting('library', { ...state.settings.library, tab: state.libraryTab });
-    parts.push(h('nav', { class: 'tabs', role: 'tablist' }, tabs.map((t) => h('button', {
-      role: 'tab',
-      'aria-selected': t.id === state.libraryTab ? 'true' : 'false',
-      onclick: () => {
-        state.libraryTab = t.id;
-        showPanel('library');
-      },
-    }, t.label))));
+    parts.push(tabList('Library', tabs, state.libraryTab, (id) => {
+      state.libraryTab = id;
+      showPanel('library', { focusTab: true });
+    }));
   }
   if (kind === 'study') {
-    parts.push(h('nav', { class: 'tabs', role: 'tablist' }, STUDY_TABS.map((t) => h('button', {
-      role: 'tab',
-      'aria-selected': t.id === state.studyTab ? 'true' : 'false',
-      onclick: () => {
-        state.studyTab = t.id;
-        showPanel('study');
-      },
-    }, t.label))));
+    parts.push(tabList('Study', STUDY_TABS, state.studyTab, (id) => {
+      state.studyTab = id;
+      showPanel('study', { focusTab: true });
+    }));
   }
+  if (kind === 'library' || kind === 'study') body.setAttribute('role', 'tabpanel');
   parts.push(body);
   clear(panel, parts);
+  if (options.focusTab) panel.querySelector('[role="tab"][aria-selected="true"]')?.focus();
   if (kind === 'search') {
     const input = renderSearch(body, ctx, options.initial || '');
     input.focus();
@@ -771,6 +856,14 @@ function print(initial = null) {
     bookNames: parallelModules ? parallelModules.map((m) => bookName(m, state.book)) : null,
     label: (first, last) => formatReference(info.language, state.book, state.chapter, first, state.chapter, last, own?.abbrev),
     describeNotes,
+    sheet: () => {
+      const verses = selectedVerses();
+      const all = state.data.verses;
+      const range = verses.length
+        ? { start: verses[0].canon, end: verses[verses.length - 1].canonEnd, title: selectionLabel(verses) }
+        : { start: all[0]?.canon, end: all[all.length - 1]?.canonEnd || all[all.length - 1]?.canon, title: `${bookName(info, state.book)} ${state.chapter}` };
+      return buildSheet(libraryCtx, range);
+    },
   }, state.settings.print, (value) => setSetting('print', value));
 }
 
@@ -824,7 +917,7 @@ function bind() {
       const other = state.modules.find((m) => m.abbreviation !== state.module && m.books.some((b) => b.osis === state.book));
       if (other) modules = [other.abbreviation];
     }
-    setSetting('parallel', { enabled, modules });
+    setSetting('parallel', { ...state.settings.parallel, enabled, modules });
     reopen();
   });
   $('#btn-goto').addEventListener('click', palette);
@@ -968,6 +1061,14 @@ function bind() {
       return;
     }
     if (typing || ctrl || event.altKey) return;
+    // In the text, the arrow keys move the selection by a verse and Shift stretches it; Enter selects the verse at the top.
+    const inReader = event.target === document.body || event.target.closest?.('#reader');
+    if (inReader && !event.target.closest?.('button') && (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter')) {
+      if (moveSelection(event.key, event.shiftKey)) {
+        event.preventDefault();
+        return;
+      }
+    }
     if (event.key === 'ArrowLeft') goRelative('prev');
     else if (event.key === 'ArrowRight') goRelative('next');
     else if (event.key === '[') goBook(-1);

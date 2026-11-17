@@ -6,3 +6,4 @@ src-tauri/gen/schemas/
 *.deb
 *.rpm
 *.apk
+__pycache__/

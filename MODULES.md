@@ -56,6 +56,9 @@ beside the program packages. Today that is:
 | `EASTON.grtb` | Dictionary: Easton's Bible Dictionary | 5 MB | Public domain |
 | `SMITH.grtb` | Dictionary: Smith's Bible Dictionary | 5 MB | Public domain |
 | `NAVE.grtb` | Topical index: Nave's Topical Bible | 7 MB | Public domain |
+| `SBLGNTAPP.grtb` | Apparatus: where the editions of the Greek New Testament differ | 1 MB | CC BY 4.0 |
+| `EUSEBIUS.grtb` | Harmony: the Eusebian canons of the four Gospels | 0.2 MB | Public domain |
+| `ATLAS.grtb` | Atlas: places with their position, dated events, a map of the lands of the Bible | 0.7 MB | CC BY-SA 4.0 |
 
 The release's `SHA256SUMS` file covers these too.
 
@@ -88,11 +91,35 @@ The release's `SHA256SUMS` file covers these too.
 The Catena Aurea covers only the four Gospels, and the Fathers only the verses
 they quote; on any other verse the panel says so.
 
-**About the licences.** Three of these packs carry Creative Commons licences.
+**For variants, parallels, the map and the timeline**, install
+`SBLGNTAPP.grtb`, `EUSEBIUS.grtb` and `ATLAS.grtb`. Then:
+
+1. Select a verse of the New Testament and open **Library**, tab **This
+   passage**. Under **Variants**, each line gives the words of the SBLGNT with
+   the editions that print them, then after `]` the other readings with theirs.
+   **Sigla** says which edition each abbreviation names.
+2. In a Gospel, **Parallels** sets beside the verse the passages the other
+   Gospels tell of the same thing, in the translation you are reading. A
+   section no other Gospel shares says so.
+3. **Places in this chapter** lists the places named; **Show them on the map**
+   opens the **Map** tab. Drag the map to move it, use the wheel or **+** and
+   **−** to zoom, and click a place for every verse that names it.
+4. The **Timeline** tab lists the dated events and marks those of the chapter
+   you are reading.
+
+**Signatures.** The packs published with GRT Bible are signed. **Installed**
+shows `Signed by GRT Project, key 4f4d 552e 5af3 eacd.` under each one, and
+**Check the signature** checks it again. A pack changed after it was signed
+is refused at installation with `This pack was refused: the module was
+changed after it was signed.` A pack you converted yourself is not signed, and
+the library says so; it works the same.
+
+**About the licences.** Five of these packs carry Creative Commons licences.
 They let you use, copy and share the files freely, on one condition: the
 authors are named, as each module does in its licence line. `SBLGNT.grtb`
 must also be shared under the same licence as its parsing (CC BY-SA). Nothing
-changes for the program itself, which stays MIT.
+changes for the program itself, which stays MIT. `ATLAS.grtb`, like
+`SBLGNT.grtb`, is shared under the same licence as its source (CC BY-SA).
 
 ---
 
@@ -315,6 +342,8 @@ GRT Bible says why. What each message means:
 | `... expands N times, which no module text does` | A file inside the `.zip` grows far more than any text does when unpacked. | Do not use that file. |
 | `the archive holds N files, more than any module` | More than 20,000 files inside the `.zip`. | Do not use that file. |
 | `the module holds a view or trigger` | A `.grtb` file contains database parts no module needs. | Do not use that file. |
+| `This pack was refused: the module was changed after it was signed.` | Something in the file differs from what was signed: damage, or a change made on purpose. | Download it again from the release page and compare it with `SHA256SUMS`. |
+| `the module carries a signature in a form this version does not read` | The pack was signed by a later version. | Update GRT Bible. |
 
 On Linux, if you check a download from the release page:
 
